@@ -1,2 +1,5 @@
 python-telegram-bot==20.3
 python-telegram-bot[webhooks]==20.3
+import nest_asyncio
+nest_asyncio.apply()
+pip install nest_asyncio
