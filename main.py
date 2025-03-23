@@ -3,6 +3,7 @@ import asyncio
 import re
 import nest_asyncio
 import time
+from datetime import datetime, timedelta
 from aiohttp import web
 from telegram import Update, ChatPermissions
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
@@ -11,12 +12,18 @@ nest_asyncio.apply()
 
 ADMIN_CHAT_ID = 296920330  # Твой числовой ID
 
-def get_timestamp():
+def get_local_time():
     return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+
+def get_tyumen_time():
+    # Предположим, что Тюменское время = UTC+5
+    return (datetime.utcnow() + timedelta(hours=5)).strftime('%Y-%m-%d %H:%M:%S')
 
 def get_chat_link(chat):
     if chat.username:
         return f"https://t.me/{chat.username}"
+    elif chat.title:
+        return chat.title
     else:
         return f"Chat ID: {chat.id}"
 
@@ -80,7 +87,7 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
                     until_date=until_date
                 )
                 username = f"@{member.username}" if member.username else (member.first_name or str(member.id))
-                notif = (f"[{get_timestamp()}] New member {member.id} ({username}) restricted for 30 seconds "
+                notif = (f"[{get_local_time()}] New member {member.id} ({username}) restricted for 30 seconds "
                          f"in chat {msg.chat.id} ({chat_link}).")
                 print(notif)
                 await send_admin_notification(context.bot, notif)
@@ -105,7 +112,7 @@ async def delete_left_member_notification(update: Update, context: ContextTypes.
                 chat_id=msg.chat.id,
                 message_id=msg.message_id
             )
-            notif = f"[{get_timestamp()}] Left member notification deleted in chat {msg.chat.id} ({chat_link})."
+            notif = f"[{get_local_time()}] Left member notification deleted in chat {msg.chat.id} ({chat_link})."
             print(notif)
             await send_admin_notification(context.bot, notif)
         except Exception as e:
@@ -148,11 +155,16 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                         break
 
         if permanent_ban:
-            chat_link = get_chat_link(msg.chat)
             user = msg.from_user
             username = f"@{user.username}" if user.username else (user.first_name or str(user.id))
-            notif = (f"[{get_timestamp()}] Permanent ban triggered for user {user.id} ({username}) "
-                     f"in chat {msg.chat.id} ({chat_link}).\nOffending message: {msg.text}")
+            chat_link = get_chat_link(msg.chat)
+            block_date = get_local_time()
+            tyumen_time = get_tyumen_time()
+            notif = (f"Никнейм: {username}\n"
+                     f"Дата блокировки: {block_date}\n"
+                     f"Время Тюменское: {tyumen_time}\n"
+                     f"Название канала: {chat_link}\n"
+                     f"Сообщение: {msg.text}")
             print(notif)
             # Сначала удаляем сообщение с нарушением
             try:
@@ -172,7 +184,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 print("User banned permanently.")
             except Exception as e:
                 print("Error banning user:", e)
-            # Отправляем уведомление админу с информацией о пользователе, сообщении и ссылкой на чат
+            # Отправляем уведомление админу
             await send_admin_notification(context.bot, notif)
 
 async def init_app():
