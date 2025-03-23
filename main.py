@@ -9,14 +9,28 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTyp
 
 nest_asyncio.apply()
 
-# Используем числовой идентификатор для уведомлений
-ADMIN_CHAT_ID = 296920330
+ADMIN_CHAT_ID = 296920330  # Твой числовой ID
+
+def get_timestamp():
+    return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+
+def get_chat_link(chat):
+    if chat.username:
+        return f"https://t.me/{chat.username}"
+    else:
+        return f"Chat ID: {chat.id}"
+
+async def send_admin_notification(bot, text: str) -> None:
+    try:
+        await bot.send_message(chat_id=ADMIN_CHAT_ID, text=text)
+    except Exception as e:
+        print("Error sending admin notification:", e)
 
 # Оригинальные спам-слова и спам-фразы (оставляем пустыми, если не используются)
-SPAM_WORDS = ["", "", "", ""]
-SPAM_PHRASES = ["", ""]
+SPAM_WORDS = []      
+SPAM_PHRASES = []    
 
-# Фразы для постоянной блокировки (при встрече хотя бы одной — блокируем навсегда)
+# Фразы для постоянной блокировки (если встречается хотя бы одна, блокируем навсегда)
 PERMANENT_BLOCK_PHRASES = [
     "хватит жить на мели!",
     "начни зарабатывать",
@@ -46,21 +60,13 @@ COMBINED_BLOCKS = [
     ["трейдинг", "торговля"]
 ]
 
-def get_timestamp():
-    return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
-
-async def send_admin_notification(bot, text: str) -> None:
-    try:
-        await bot.send_message(chat_id=ADMIN_CHAT_ID, text=text)
-    except Exception as e:
-        print("Error sending admin notification:", e)
-
 async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if msg and msg.new_chat_members:
         print("New members joined:", [member.id for member in msg.new_chat_members])
+        chat_link = get_chat_link(msg.chat)
         for member in msg.new_chat_members:
-            until_date = int(time.time()) + 300  # ограничение на 5 минут (300 секунд)
+            until_date = int(time.time()) + 30  # ограничение на 30 секунд
             try:
                 await context.bot.restrict_chat_member(
                     chat_id=msg.chat.id,
@@ -73,7 +79,9 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
                     ),
                     until_date=until_date
                 )
-                notif = f"[{get_timestamp()}] New member {member.id} restricted for 5 minutes in chat {msg.chat.id}."
+                username = f"@{member.username}" if member.username else (member.first_name or str(member.id))
+                notif = (f"[{get_timestamp()}] New member {member.id} ({username}) restricted for 30 seconds "
+                         f"in chat {msg.chat.id} ({chat_link}).")
                 print(notif)
                 await send_admin_notification(context.bot, notif)
             except Exception as e:
@@ -91,12 +99,13 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def delete_left_member_notification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if msg and msg.left_chat_member:
+        chat_link = get_chat_link(msg.chat)
         try:
             await context.bot.delete_message(
                 chat_id=msg.chat.id,
                 message_id=msg.message_id
             )
-            notif = f"[{get_timestamp()}] Left member notification deleted in chat {msg.chat.id}."
+            notif = f"[{get_timestamp()}] Left member notification deleted in chat {msg.chat.id} ({chat_link})."
             print(notif)
             await send_admin_notification(context.bot, notif)
         except Exception as e:
@@ -139,8 +148,11 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                         break
 
         if permanent_ban:
-            notif = (f"[{get_timestamp()}] Permanent ban triggered for user {msg.from_user.id} in chat "
-                     f"{msg.chat.id}. Offending message: {msg.text}")
+            chat_link = get_chat_link(msg.chat)
+            user = msg.from_user
+            username = f"@{user.username}" if user.username else (user.first_name or str(user.id))
+            notif = (f"[{get_timestamp()}] Permanent ban triggered for user {user.id} ({username}) "
+                     f"in chat {msg.chat.id} ({chat_link}).\nOffending message: {msg.text}")
             print(notif)
             # Сначала удаляем сообщение с нарушением
             try:
@@ -155,12 +167,12 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             try:
                 await context.bot.ban_chat_member(
                     chat_id=msg.chat.id,
-                    user_id=msg.from_user.id
+                    user_id=user.id
                 )
                 print("User banned permanently.")
             except Exception as e:
                 print("Error banning user:", e)
-            # Отправляем уведомление администратору
+            # Отправляем уведомление админу с информацией о пользователе, сообщении и ссылкой на чат
             await send_admin_notification(context.bot, notif)
 
 async def init_app():
@@ -172,7 +184,7 @@ async def init_app():
     # Создаем приложение бота
     app_bot = ApplicationBuilder().token(TOKEN).build()
     
-    # Регистрируем обработчик для новых участников (ограничение на 5 минут)
+    # Регистрируем обработчик для новых участников (ограничение на 30 секунд)
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
     # Регистрируем обработчик для уведомлений об уходе (удаляем уведомления)
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_left_member_notification))
