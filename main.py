@@ -12,13 +12,15 @@ async def delete_trading_message(update: Update, context: ContextTypes.DEFAULT_T
                 message_id=update.message.message_id
             )
 
+async def on_startup(app):
+    # Замените <your-app-name> на имя вашего приложения на Render
+    webhook_url = f"https://<your-app-name>.onrender.com/webhook"
+    await app.bot.set_webhook(webhook_url)
+
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8443))
+    port = int(os.environ.get("PORT", 8443))
     app = ApplicationBuilder().token("7712516662:AAECNpqvIMy1OszmAAQxrBEuHYhQc52v4kQ").build()
     
-    # Настройка webhook (укажи URL своего приложения)
-    webhook_url = f"https://<your-app-name>.onrender.com/webhook"
-    app.bot.set_webhook(webhook_url)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, delete_trading_message))
     
-    # Запуск веб-сервера на нужном порту
-    app.run_webhook(listen="0.0.0.0", port=port, url_path="webhook")
+    app.run_webhook(listen="0.0.0.0", port=port, url_path="webhook", on_startup=on_startup)
