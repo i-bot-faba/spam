@@ -12,24 +12,24 @@ nest_asyncio.apply()
 # Список спам-слов (отдельные слова)
 SPAM_WORDS = ["трейдинг", "трейдер", "криптовалюта", "крипто"]
 
-# Список спам-фраз (последовательности из 2 и более слов)
-SPAM_PHRASES = ["курсы по торговле", "курсы по трейдингу"]
+# Список спам-фраз (последовательности слов, если нужно)
+SPAM_PHRASES = ["курсы по трейдингу", "трейдинг криптовалюта"]
 
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Обрабатываем как обычные сообщения, так и сообщения из каналов
+    # Получаем сообщение из update.message или update.channel_post
     msg = update.message or update.channel_post
     if msg and msg.text:
         text = msg.text.lower()
         print("Received message:", text)
         spam_found = False
 
-        # Проверяем отдельные слова (с учетом границ слова)
+        # Проверяем наличие спам-слов (с учетом границ слова)
         for word in SPAM_WORDS:
             if re.search(r'\b' + re.escape(word) + r'\b', text):
                 spam_found = True
                 break
 
-        # Если не найдено по отдельным словам, проверяем спам-фразы (подстрока)
+        # Если по отдельным словам не найдено, проверяем спам-фразы (как подстроку)
         if not spam_found:
             for phrase in SPAM_PHRASES:
                 if phrase in text:
@@ -39,28 +39,35 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if spam_found:
             print("Spam detected in message id:", msg.message_id)
             try:
-                await context.bot.delete_message(
+                # Баним пользователя навсегда
+                await context.bot.ban_chat_member(
                     chat_id=msg.chat.id,
-                    message_id=msg.message_id
+                    user_id=msg.from_user.id
                 )
-                print("Message deleted.")
+                print("User banned permanently.")
             except Exception as e:
-                print("Error deleting message:", e)
-            
-            # Если сообщение в группе, ограничиваем права пользователя (блокировка на 1 час)
-            if msg.chat.type in ["group", "supergroup"]:
-                if msg.from_user:
-                    try:
-                        until_date = int(time.time()) + 3600  # блокировка на 1 час
-                        await context.bot.restrict_chat_member(
-                            chat_id=msg.chat.id,
-                            user_id=msg.from_user.id,
-                            permissions=ChatPermissions(can_send_messages=False),
-                            until_date=until_date
-                        )
-                        print("User restricted until", until_date)
-                    except Exception as e:
-                        print("Error restricting user:", e)
+                print("Error banning user:", e)
+
+async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.message
+    if msg and msg.new_chat_members:
+        for member in msg.new_chat_members:
+            until_date = int(time.time()) + 600  # 10 минут
+            try:
+                await context.bot.restrict_chat_member(
+                    chat_id=msg.chat.id,
+                    user_id=member.id,
+                    permissions=ChatPermissions(
+                        can_send_messages=False,
+                        can_send_media_messages=False,
+                        can_send_other_messages=False,
+                        can_add_web_page_previews=False
+                    ),
+                    until_date=until_date
+                )
+                print(f"Restricted new member {member.id} for 10 minutes.")
+            except Exception as e:
+                print("Error restricting new member:", e)
 
 async def init_app():
     port = int(os.environ.get("PORT", 8443))
@@ -68,16 +75,21 @@ async def init_app():
     if not TOKEN:
         raise ValueError("BOT_TOKEN не задан в переменных окружения")
     
-    # Создаем приложение бота и добавляем обработчик для всех обновлений
+    # Создаем приложение бота и добавляем обработчики
     app_bot = ApplicationBuilder().token(TOKEN).build()
+    # Обработчик для спам-сообщений (для всех обновлений)
     app_bot.add_handler(MessageHandler(filters.ALL, delete_spam_message))
+    # Обработчик для новых участников (сообщения с new_chat_members)
+    app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
+    
+    # Обязательно инициализируем приложение
     await app_bot.initialize()
     
     # Устанавливаем webhook (убеди­сь, что URL соответствует домену твоего приложения на Render)
     webhook_url = "https://spampython-bot-py.onrender.com/webhook"
     await app_bot.bot.set_webhook(webhook_url)
     
-    # Создаем aiohttp-приложение для health check и обработки webhook-обновлений
+    # Создаем aiohttp-приложение для обработки обновлений и health check
     aio_app = web.Application()
     
     async def health(request):
