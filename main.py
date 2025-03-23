@@ -12,7 +12,6 @@ nest_asyncio.apply()
 SPAM_WORDS = ["трейдинг", "трейдер", "криптовалюта", "крипто"]
 
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Получаем сообщение из update.message или update.channel_post
     msg = update.message or update.channel_post
     if msg and msg.text:
         text = msg.text.lower()
@@ -34,9 +33,12 @@ async def init_app():
     if not TOKEN:
         raise ValueError("BOT_TOKEN не задан в переменных окружения")
     
-    # Создаем приложение бота и добавляем обработчик для всех обновлений
+    # Создаем приложение бота и добавляем обработчик
     app_bot = ApplicationBuilder().token(TOKEN).build()
     app_bot.add_handler(MessageHandler(filters.ALL, delete_spam_message))
+    
+    # Инициализируем приложение (важно!)
+    await app_bot.initialize()
     
     # Устанавливаем webhook (убеди­сь, что URL корректный)
     webhook_url = "https://spampython-bot-py.onrender.com/webhook"
@@ -65,8 +67,11 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     print(f"Server running on port {port}")
+    # Держим сервер запущенным
     while True:
         await asyncio.sleep(3600)
 
+if __name__ == '__main__':
+    asyncio.run(main())
 if __name__ == '__main__':
     asyncio.run(main())
