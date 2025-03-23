@@ -9,17 +9,47 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTyp
 
 nest_asyncio.apply()
 
-# Список спам-слов (отдельные слова)
+# Оригинальные спам-слова и спам-фразы
 SPAM_WORDS = ["трейдинг", "трейдер", "криптовалюта", "крипто"]
-
-# Список спам-фраз (последовательности слов, если нужно)
 SPAM_PHRASES = ["курсы по трейдингу", "трейдинг криптовалюта"]
+
+# Фразы, по которым происходит блокировка навсегда
+PERMANENT_BLOCK_PHRASES = [
+    "хватит жить на мели!",
+    "начни зарабатывать",
+    "хватит сидеть без денег!",
+    "давай заработаем",
+    "от 8000р в день",
+    "от 9000р в день",
+    "от 10000р в день",
+    "от 11000р в день",
+    "от 12000р в день",
+    "от 13000р в день",
+    "от 14000р в день",
+    "приобрёл полезные курсы",
+    "курсы по торговле",
+    "курсы по трейдингу",
+    "дочитываю книгу",
+    "сорос",
+    "курсы по инвестициям",
+    "безвозвратно поделиться"
+]
+
+# Комбинации слов для блокировки (если все слова из комбинации присутствуют)
+COMBINED_BLOCKS = [
+    ["трейдинг", "инвестиции", "криптовалюты"],
+    ["трейдинг", "недвижимость"],
+    ["трейдинг", "инвестиции"],
+    ["трейдинг", "криптовалюты"],
+    ["трейдинг", "торговля"]
+]
 
 async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if msg and msg.new_chat_members:
+        print("New members joined:", [member.id for member in msg.new_chat_members])
         for member in msg.new_chat_members:
-            until_date = int(time.time()) + 300  # ограничение на 5 минут
+            until_date = int(time.time()) + 300  # 5 минут = 300 секунд
             try:
                 await context.bot.restrict_chat_member(
                     chat_id=msg.chat.id,
@@ -32,35 +62,50 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
                     ),
                     until_date=until_date
                 )
-                print(f"Restricted new member {member.id} for 10 minutes.")
+                print(f"Restricted new member {member.id} for 5 minutes.")
             except Exception as e:
                 print("Error restricting new member:", e)
 
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Обрабатываем сообщения (обычные или из каналов)
     msg = update.message or update.channel_post
     if msg and msg.text:
         text = msg.text.lower()
         print("Received message:", text)
-        spam_found = False
+        
+        permanent_ban = False
 
-        # Проверяем наличие спам-слов
-        for word in SPAM_WORDS:
-            if re.search(r'\b' + re.escape(word) + r'\b', text):
-                spam_found = True
+        # Проверяем наличие фраз для постоянной блокировки
+        for phrase in PERMANENT_BLOCK_PHRASES:
+            if phrase in text:
+                print(f"Permanent block phrase detected: {phrase}")
+                permanent_ban = True
                 break
 
-        # Если по отдельным словам не найдено, проверяем спам-фразы
-        if not spam_found:
-            for phrase in SPAM_PHRASES:
-                if phrase in text:
-                    spam_found = True
+        # Проверяем комбинации слов
+        if not permanent_ban:
+            for combo in COMBINED_BLOCKS:
+                if all(word in text for word in combo):
+                    print(f"Combined block detected: {combo}")
+                    permanent_ban = True
                     break
 
-        if spam_found:
-            print("Spam detected in message id:", msg.message_id)
+        # Если не сработали новые условия, проверяем оригинальные спам-слова/фразы
+        if not permanent_ban:
+            for word in SPAM_WORDS:
+                if re.search(r'\b' + re.escape(word) + r'\b', text):
+                    print(f"Spam word detected: {word}")
+                    permanent_ban = True
+                    break
+            if not permanent_ban:
+                for phrase in SPAM_PHRASES:
+                    if phrase in text:
+                        print(f"Spam phrase detected: {phrase}")
+                        permanent_ban = True
+                        break
+
+        if permanent_ban:
+            print("Permanent ban triggered for message id:", msg.message_id)
             try:
-                # Баним пользователя навсегда
                 await context.bot.ban_chat_member(
                     chat_id=msg.chat.id,
                     user_id=msg.from_user.id
@@ -78,12 +123,11 @@ async def init_app():
     # Создаем приложение бота
     app_bot = ApplicationBuilder().token(TOKEN).build()
     
-    # Регистрируем сначала обработчик для новых участников
+    # Регистрируем обработчик для новых участников (ограничение на 5 минут)
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
-    # Затем общий обработчик для остальных сообщений
+    # Затем общий обработчик для сообщений (проверка на спам и блокировка)
     app_bot.add_handler(MessageHandler(filters.ALL, delete_spam_message))
     
-    # Инициализируем приложение
     await app_bot.initialize()
     
     # Устанавливаем webhook (убеди­сь, что URL корректный)
