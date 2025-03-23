@@ -14,7 +14,7 @@ async def delete_trading_message(update: Update, context: ContextTypes.DEFAULT_T
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8443))
-    app = ApplicationBuilder().token("YOUR_TELEGRAM_BOT_TOKEN").build()
+    app = ApplicationBuilder().token("7712516662:AAECNpqvIMy1OszmAAQxrBEuHYhQc52v4kQ").build()
     
     # Настройка webhook (укажи URL своего приложения)
     webhook_url = f"https://<your-app-name>.onrender.com/webhook"
