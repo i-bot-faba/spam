@@ -64,7 +64,7 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
                 print(f"Restricted new member {member.id} for 5 minutes.")
             except Exception as e:
                 print("Error restricting new member:", e)
-        # После обработки новых участников удаляем системное уведомление о вступлении
+        # Удаляем уведомление о вступлении
         try:
             await context.bot.delete_message(
                 chat_id=msg.chat.id,
@@ -108,7 +108,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                     permanent_ban = True
                     break
 
-        # Если не сработали выше условия, проверяем оригинальные спам-слова/фразы (пустые сейчас)
+        # Если не сработали выше условия, проверяем оригинальные спам-слова/фразы
         if not permanent_ban:
             for word in SPAM_WORDS:
                 if re.search(r'\b' + re.escape(word) + r'\b', text):
@@ -124,6 +124,16 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         if permanent_ban:
             print("Permanent ban triggered for message id:", msg.message_id)
+            # Сначала удаляем сообщение с нарушением
+            try:
+                await context.bot.delete_message(
+                    chat_id=msg.chat.id,
+                    message_id=msg.message_id
+                )
+                print("Offending message deleted.")
+            except Exception as e:
+                print("Error deleting offending message:", e)
+            # Блокируем пользователя навсегда
             try:
                 await context.bot.ban_chat_member(
                     chat_id=msg.chat.id,
@@ -142,11 +152,11 @@ async def init_app():
     # Создаем приложение бота
     app_bot = ApplicationBuilder().token(TOKEN).build()
     
-    # Регистрируем обработчик для новых участников (ограничение на 5 минут и удаление уведомления)
+    # Регистрируем обработчик для новых участников (ограничение на 5 минут)
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
-    # Регистрируем обработчик для уведомлений об уходе из группы (удаляем уведомление)
+    # Регистрируем обработчик для уведомлений об уходе (удаляем уведомления)
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_left_member_notification))
-    # Регистрируем общий обработчик для всех сообщений (для проверки спама и блокировки)
+    # Регистрируем общий обработчик для сообщений (проверка спама и блокировка)
     app_bot.add_handler(MessageHandler(filters.ALL, delete_spam_message))
     
     await app_bot.initialize()
