@@ -9,7 +9,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTyp
 
 nest_asyncio.apply()
 
-# Оригинальные спам-слова и спам-фразы
+# Оригинальные спам-слова и спам-фразы (оставляем пустыми, если не используются)
 SPAM_WORDS = ["", "", "", ""]
 SPAM_PHRASES = ["", ""]
 
@@ -64,6 +64,27 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
                 print(f"Restricted new member {member.id} for 5 minutes.")
             except Exception as e:
                 print("Error restricting new member:", e)
+        # После обработки новых участников удаляем системное уведомление о вступлении
+        try:
+            await context.bot.delete_message(
+                chat_id=msg.chat.id,
+                message_id=msg.message_id
+            )
+            print("Deleted join notification message.")
+        except Exception as e:
+            print("Error deleting join notification message:", e)
+
+async def delete_left_member_notification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.message
+    if msg and msg.left_chat_member:
+        try:
+            await context.bot.delete_message(
+                chat_id=msg.chat.id,
+                message_id=msg.message_id
+            )
+            print("Deleted left member notification message.")
+        except Exception as e:
+            print("Error deleting left member notification message:", e)
 
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message or update.channel_post
@@ -87,7 +108,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                     permanent_ban = True
                     break
 
-        # Если не сработали выше условия, проверяем оригинальные спам-слова/фразы
+        # Если не сработали выше условия, проверяем оригинальные спам-слова/фразы (пустые сейчас)
         if not permanent_ban:
             for word in SPAM_WORDS:
                 if re.search(r'\b' + re.escape(word) + r'\b', text):
@@ -121,8 +142,10 @@ async def init_app():
     # Создаем приложение бота
     app_bot = ApplicationBuilder().token(TOKEN).build()
     
-    # Регистрируем обработчик для новых участников (ограничение на 5 минут)
+    # Регистрируем обработчик для новых участников (ограничение на 5 минут и удаление уведомления)
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
+    # Регистрируем обработчик для уведомлений об уходе из группы (удаляем уведомление)
+    app_bot.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_left_member_notification))
     # Регистрируем общий обработчик для всех сообщений (для проверки спама и блокировки)
     app_bot.add_handler(MessageHandler(filters.ALL, delete_spam_message))
     
