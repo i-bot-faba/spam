@@ -8,19 +8,25 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTyp
 
 nest_asyncio.apply()
 
-# Список спам-слов (по одному слову)
+# Список спам-слов
 SPAM_WORDS = ["трейдинг", "трейдер", "криптовалюта", "крипто"]
 
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.message and update.message.text:
-        text = update.message.text.lower()
-        # Ищем любое из спам-слов по границам слова
+    # Получаем сообщение из update.message или update.channel_post
+    msg = update.message or update.channel_post
+    if msg and msg.text:
+        text = msg.text.lower()
+        print("Received message:", text)
         pattern = r'\b(' + '|'.join(SPAM_WORDS) + r')\b'
         if re.search(pattern, text):
-            await context.bot.delete_message(
-                chat_id=update.effective_chat.id,
-                message_id=update.message.message_id
-            )
+            print("Spam word detected. Deleting message, id:", msg.message_id)
+            try:
+                await context.bot.delete_message(
+                    chat_id=msg.chat.id,
+                    message_id=msg.message_id
+                )
+            except Exception as e:
+                print("Error deleting message:", e)
 
 async def init_app():
     port = int(os.environ.get("PORT", 8443))
@@ -28,23 +34,21 @@ async def init_app():
     if not TOKEN:
         raise ValueError("BOT_TOKEN не задан в переменных окружения")
     
-    # Создаем приложение бота и добавляем обработчик сообщений
+    # Создаем приложение бота и добавляем обработчик для всех обновлений
     app_bot = ApplicationBuilder().token(TOKEN).build()
-    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, delete_spam_message))
+    app_bot.add_handler(MessageHandler(filters.ALL, delete_spam_message))
     
-    # Устанавливаем webhook у Telegram (замени URL на актуальный домен твоего приложения на Render)
+    # Устанавливаем webhook (убеди­сь, что URL корректный)
     webhook_url = "https://spampython-bot-py.onrender.com/webhook"
     await app_bot.bot.set_webhook(webhook_url)
     
-    # Создаем aiohttp-приложение для обработки запросов от Telegram и health check
+    # Создаем aiohttp-приложение для health check и обработки вебхука
     aio_app = web.Application()
     
-    # Endpoint для health check (Render проверяет GET-запрос на "/")
     async def health(request):
         return web.Response(text="OK")
     aio_app.router.add_get("/", health)
     
-    # Endpoint для обработки вебхука (POST /webhook)
     async def handle_webhook(request):
         data = await request.json()
         update = Update.de_json(data, app_bot.bot)
@@ -61,7 +65,6 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     print(f"Server running on port {port}")
-    # Держим сервер запущенным
     while True:
         await asyncio.sleep(3600)
 
