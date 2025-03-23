@@ -64,14 +64,14 @@ COMBINED_BLOCKS = [
     ["трейдинг", "торговля"]
 ]
 
-# Обработчик вступления новых участников: ограничение на 30 секунд, удаление уведомления.
+# Обработчик вступления новых участников: ограничение на 180 секунд, удаление уведомления.
 async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if msg and msg.new_chat_members:
         print("New members joined:", [member.id for member in msg.new_chat_members])
         chat_link = get_chat_link(msg.chat)
         for member in msg.new_chat_members:
-            until_date = int(time.time()) + 300  # ограничение на 30 секунд
+            until_date = int(time.time()) + 180  # ограничение на 180 секунд
             try:
                 await context.bot.restrict_chat_member(
                     chat_id=msg.chat.id,
