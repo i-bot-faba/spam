@@ -19,7 +19,7 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
     msg = update.message
     if msg and msg.new_chat_members:
         for member in msg.new_chat_members:
-            until_date = int(time.time()) + 600  # ограничение на 10 минут
+            until_date = int(time.time()) + 300  # ограничение на 10 минут
             try:
                 await context.bot.restrict_chat_member(
                     chat_id=msg.chat.id,
