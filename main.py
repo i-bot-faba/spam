@@ -15,11 +15,15 @@ async def delete_trading_message(update: Update, context: ContextTypes.DEFAULT_T
 
 async def main():
     port = int(os.environ.get("PORT", 8443))
-    app = ApplicationBuilder().token("7712516662:AAECNpqvIMy1OszmAAQxrBEuHYhQc52v4kQ").build()
+    TOKEN = os.environ.get("BOT_TOKEN")
+    if not TOKEN:
+        raise ValueError("BOT_TOKEN не задан в переменных окружения")
+    
+    app = ApplicationBuilder().token(TOKEN).build()
     
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, delete_trading_message))
     
-    # Укажи правильный URL: замените <your-app-name> на имя приложения на Render
+    # Укажи правильный URL: замените <your-app-name> на имя твоего приложения на Render
     webhook_url = f"https://<your-app-name>.onrender.com/webhook"
     await app.bot.set_webhook(webhook_url)
     
@@ -27,4 +31,3 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-
