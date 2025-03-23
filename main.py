@@ -11,9 +11,9 @@ nest_asyncio.apply()
 
 # Оригинальные спам-слова и спам-фразы
 SPAM_WORDS = ["", "", "", ""]
-SPAM_PHRASES = ["", "т"]
+SPAM_PHRASES = ["", ""]
 
-# Фразы, по которым происходит блокировка навсегда
+# Фразы для постоянной блокировки (если встречается хотя бы одна, блокируем навсегда)
 PERMANENT_BLOCK_PHRASES = [
     "хватит жить на мели!",
     "начни зарабатывать",
@@ -35,12 +35,11 @@ PERMANENT_BLOCK_PHRASES = [
     "безвозвратно поделиться"
 ]
 
-# Комбинации слов для блокировки (если все слова из комбинации присутствуют)
+# Комбинации слов для блокировки (если в сообщении присутствуют все слова из комбинации)
 COMBINED_BLOCKS = [
     ["трейдинг", "инвестиции", "криптовалюты"],
     ["трейдинг", "недвижимость"],
     ["трейдинг", "инвестиции"],
-    ["трейдинг", "криптовалюты"],
     ["трейдинг", "торговля"]
 ]
 
@@ -49,7 +48,7 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
     if msg and msg.new_chat_members:
         print("New members joined:", [member.id for member in msg.new_chat_members])
         for member in msg.new_chat_members:
-            until_date = int(time.time()) + 300  # 5 минут = 300 секунд
+            until_date = int(time.time()) + 300  # ограничение на 5 минут (300 секунд)
             try:
                 await context.bot.restrict_chat_member(
                     chat_id=msg.chat.id,
@@ -71,7 +70,6 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     if msg and msg.text:
         text = msg.text.lower()
         print("Received message:", text)
-        
         permanent_ban = False
 
         # Проверяем наличие фраз для постоянной блокировки
@@ -81,7 +79,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 permanent_ban = True
                 break
 
-        # Проверяем комбинации слов
+        # Проверяем комбинации слов (если все слова из комбинации присутствуют)
         if not permanent_ban:
             for combo in COMBINED_BLOCKS:
                 if all(word in text for word in combo):
@@ -89,7 +87,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                     permanent_ban = True
                     break
 
-        # Если не сработали новые условия, проверяем оригинальные спам-слова/фразы
+        # Если не сработали выше условия, проверяем оригинальные спам-слова/фразы
         if not permanent_ban:
             for word in SPAM_WORDS:
                 if re.search(r'\b' + re.escape(word) + r'\b', text):
@@ -125,7 +123,7 @@ async def init_app():
     
     # Регистрируем обработчик для новых участников (ограничение на 5 минут)
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
-    # Затем общий обработчик для сообщений (проверка на спам и блокировка)
+    # Регистрируем общий обработчик для всех сообщений (для проверки спама и блокировки)
     app_bot.add_handler(MessageHandler(filters.ALL, delete_spam_message))
     
     await app_bot.initialize()
