@@ -9,14 +9,14 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTyp
 
 nest_asyncio.apply()
 
-# Администратор (твой) для уведомлений
-ADMIN_CHAT_ID = "@i_nevsky"
+# Используем числовой идентификатор для уведомлений
+ADMIN_CHAT_ID = 296920330
 
 # Оригинальные спам-слова и спам-фразы (оставляем пустыми, если не используются)
 SPAM_WORDS = ["", "", "", ""]
 SPAM_PHRASES = ["", ""]
 
-# Фразы для постоянной блокировки (если встречается хотя бы одна, блокируем навсегда)
+# Фразы для постоянной блокировки (при встрече хотя бы одной — блокируем навсегда)
 PERMANENT_BLOCK_PHRASES = [
     "хватит жить на мели!",
     "начни зарабатывать",
@@ -73,7 +73,7 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
                     ),
                     until_date=until_date
                 )
-                notif = f"[{get_timestamp()}] New member {member.id} restricted for 5 minutes."
+                notif = f"[{get_timestamp()}] New member {member.id} restricted for 5 minutes in chat {msg.chat.id}."
                 print(notif)
                 await send_admin_notification(context.bot, notif)
             except Exception as e:
@@ -96,7 +96,7 @@ async def delete_left_member_notification(update: Update, context: ContextTypes.
                 chat_id=msg.chat.id,
                 message_id=msg.message_id
             )
-            notif = f"[{get_timestamp()}] Left member notification deleted for chat {msg.chat.id}."
+            notif = f"[{get_timestamp()}] Left member notification deleted in chat {msg.chat.id}."
             print(notif)
             await send_admin_notification(context.bot, notif)
         except Exception as e:
@@ -124,7 +124,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                     permanent_ban = True
                     break
 
-        # Если не сработали выше условия, проверяем оригинальные спам-слова/фразы
+        # Если не сработали выше условия, проверяем оригинальные спам-слова/фразы (пустые сейчас)
         if not permanent_ban:
             for word in SPAM_WORDS:
                 if re.search(r'\b' + re.escape(word) + r'\b', text):
@@ -139,7 +139,8 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                         break
 
         if permanent_ban:
-            notif = f"[{get_timestamp()}] Permanent ban triggered for user {msg.from_user.id} in chat {msg.chat.id}. Offending message: {msg.text}"
+            notif = (f"[{get_timestamp()}] Permanent ban triggered for user {msg.from_user.id} in chat "
+                     f"{msg.chat.id}. Offending message: {msg.text}")
             print(notif)
             # Сначала удаляем сообщение с нарушением
             try:
