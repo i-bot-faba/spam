@@ -23,23 +23,30 @@ async def init_app():
     if not TOKEN:
         raise ValueError("BOT_TOKEN не задан в переменных окружения")
     
+    # Создаем приложение бота и добавляем обработчик сообщений
     app_bot = ApplicationBuilder().token(TOKEN).build()
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, delete_trading_message))
     
-    # Устанавливаем webhook
+    # Устанавливаем webhook у Telegram
     webhook_url = "https://spampython-bot-py.onrender.com/webhook"
     await app_bot.bot.set_webhook(webhook_url)
     
     # Создаем aiohttp-приложение
     aio_app = web.Application()
     
-    # Health check endpoint для Render
+    # Добавляем endpoint для health check (Render проверяет GET-запрос на "/")
     async def health(request):
         return web.Response(text="OK")
     aio_app.router.add_get("/", health)
     
-    # Endpoint для вебхука, используем свойство webhook_handler
-    aio_app.router.add_post("/webhook", app_bot.webhook_handler)
+    # Собственный обработчик вебхука
+    async def handle_webhook(request):
+        data = await request.json()
+        update = Update.de_json(data, app_bot.bot)
+        await app_bot.process_update(update)
+        return web.Response(text="OK")
+    
+    aio_app.router.add_post("/webhook", handle_webhook)
     
     return aio_app, port
 
@@ -50,7 +57,6 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     print(f"Server running on port {port}")
-    # Запускаем бесконечный цикл, чтобы приложение не завершилось
     while True:
         await asyncio.sleep(3600)
 
