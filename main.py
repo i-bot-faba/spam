@@ -1,10 +1,11 @@
 import os
 import asyncio
 import nest_asyncio
+from aiohttp import web
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 
-nest_asyncio.apply()  # Разрешает вложенные event loop
+nest_asyncio.apply()
 
 TRADING_WORD = "трейдинг"
 
@@ -16,23 +17,42 @@ async def delete_trading_message(update: Update, context: ContextTypes.DEFAULT_T
                 message_id=update.message.message_id
             )
 
-async def main():
+async def init_app():
     port = int(os.environ.get("PORT", 8443))
     TOKEN = os.environ.get("BOT_TOKEN")
     if not TOKEN:
         raise ValueError("BOT_TOKEN не задан в переменных окружения")
     
-    app = ApplicationBuilder().token(TOKEN).build()
+    app_bot = ApplicationBuilder().token(TOKEN).build()
+    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, delete_trading_message))
     
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, delete_trading_message))
+    # Устанавливаем webhook
+    webhook_url = "https://spampython-bot-py.onrender.com/webhook"
+    await app_bot.bot.set_webhook(webhook_url)
     
-    # Укажи реальное имя твоего приложения на Render
-    webhook_url = f"https://spampython-bot-py.onrender.com/webhook"
-    await app.bot.set_webhook(webhook_url)
+    # Создаем объект aiohttp приложения
+    aio_app = web.Application()
     
-    await app.run_webhook(listen="0.0.0.0", port=port, url_path="webhook")
+    # Добавляем endpoint для health check
+    async def health(request):
+        return web.Response(text="OK")
+    aio_app.router.add_get("/", health)
+    
+    # Добавляем endpoint для webhook (здесь используем встроенный обработчик бота)
+    aio_app.router.add_post("/webhook", app_bot.create_webhook_handler())
+    
+    return aio_app, port
+
+async def main():
+    aio_app, port = await init_app()
+    runner = web.AppRunner(aio_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"Server running on port {port}")
+    # Запускаем бесконечный цикл, чтобы приложение не завершилось
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    loop.create_task(main())
-    loop.run_forever()
+    asyncio.run(main())
