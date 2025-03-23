@@ -9,9 +9,12 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTyp
 
 nest_asyncio.apply()
 
+# Администратор (твой) для уведомлений
+ADMIN_CHAT_ID = "@i_nevsky"
+
 # Оригинальные спам-слова и спам-фразы (оставляем пустыми, если не используются)
-SPAM_WORDS = []
-SPAM_PHRASES = []
+SPAM_WORDS = ["", "", "", ""]
+SPAM_PHRASES = ["", ""]
 
 # Фразы для постоянной блокировки (если встречается хотя бы одна, блокируем навсегда)
 PERMANENT_BLOCK_PHRASES = [
@@ -43,6 +46,15 @@ COMBINED_BLOCKS = [
     ["трейдинг", "торговля"]
 ]
 
+def get_timestamp():
+    return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+
+async def send_admin_notification(bot, text: str) -> None:
+    try:
+        await bot.send_message(chat_id=ADMIN_CHAT_ID, text=text)
+    except Exception as e:
+        print("Error sending admin notification:", e)
+
 async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if msg and msg.new_chat_members:
@@ -61,7 +73,9 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
                     ),
                     until_date=until_date
                 )
-                print(f"Restricted new member {member.id} for 5 minutes.")
+                notif = f"[{get_timestamp()}] New member {member.id} restricted for 5 minutes."
+                print(notif)
+                await send_admin_notification(context.bot, notif)
             except Exception as e:
                 print("Error restricting new member:", e)
         # Удаляем уведомление о вступлении
@@ -82,9 +96,11 @@ async def delete_left_member_notification(update: Update, context: ContextTypes.
                 chat_id=msg.chat.id,
                 message_id=msg.message_id
             )
-            print("Deleted left member notification message.")
+            notif = f"[{get_timestamp()}] Left member notification deleted for chat {msg.chat.id}."
+            print(notif)
+            await send_admin_notification(context.bot, notif)
         except Exception as e:
-            print("Error deleting left member notification message:", e)
+            print("Error deleting left member notification:", e)
 
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message or update.channel_post
@@ -123,7 +139,8 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                         break
 
         if permanent_ban:
-            print("Permanent ban triggered for message id:", msg.message_id)
+            notif = f"[{get_timestamp()}] Permanent ban triggered for user {msg.from_user.id} in chat {msg.chat.id}. Offending message: {msg.text}"
+            print(notif)
             # Сначала удаляем сообщение с нарушением
             try:
                 await context.bot.delete_message(
@@ -142,6 +159,8 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 print("User banned permanently.")
             except Exception as e:
                 print("Error banning user:", e)
+            # Отправляем уведомление администратору
+            await send_admin_notification(context.bot, notif)
 
 async def init_app():
     port = int(os.environ.get("PORT", 8443))
