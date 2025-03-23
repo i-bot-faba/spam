@@ -30,16 +30,16 @@ async def init_app():
     webhook_url = "https://spampython-bot-py.onrender.com/webhook"
     await app_bot.bot.set_webhook(webhook_url)
     
-    # Создаем объект aiohttp приложения
+    # Создаем aiohttp-приложение
     aio_app = web.Application()
     
-    # Добавляем endpoint для health check
+    # Health check endpoint для Render
     async def health(request):
         return web.Response(text="OK")
     aio_app.router.add_get("/", health)
     
-    # Добавляем endpoint для webhook (здесь используем встроенный обработчик бота)
-    aio_app.router.add_post("/webhook", app_bot.create_webhook_handler())
+    # Endpoint для вебхука, используем свойство webhook_handler
+    aio_app.router.add_post("/webhook", app_bot.webhook_handler)
     
     return aio_app, port
 
