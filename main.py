@@ -1,5 +1,6 @@
 import os
 import asyncio
+import re
 import nest_asyncio
 from aiohttp import web
 from telegram import Update
@@ -7,16 +8,15 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTyp
 
 nest_asyncio.apply()
 
-# Список спам-фраз, содержащих последовательности из двух или трёх слов
-SPAM_PHRASES = [
-    "курсы по трейдингу",
-    "курсы по торговле"
-]
+# Список спам-слов (по одному слову)
+SPAM_WORDS = ["трейдинг", "трейдер", "криптовалюта", "крипто"]
 
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message and update.message.text:
         text = update.message.text.lower()
-        if any(phrase in text for phrase in SPAM_PHRASES):
+        # Ищем любое из спам-слов по границам слова
+        pattern = r'\b(' + '|'.join(SPAM_WORDS) + r')\b'
+        if re.search(pattern, text):
             await context.bot.delete_message(
                 chat_id=update.effective_chat.id,
                 message_id=update.message.message_id
