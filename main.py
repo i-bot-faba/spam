@@ -10,8 +10,8 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTyp
 nest_asyncio.apply()
 
 # Оригинальные спам-слова и спам-фразы
-SPAM_WORDS = ["трейдинг", "трейдер", "криптовалюта", "крипто"]
-SPAM_PHRASES = ["курсы по трейдингу", "трейдинг криптовалюта"]
+SPAM_WORDS = ["", "", "", ""]
+SPAM_PHRASES = ["", "т"]
 
 # Фразы, по которым происходит блокировка навсегда
 PERMANENT_BLOCK_PHRASES = [
