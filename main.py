@@ -24,7 +24,7 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, delete_trading_message))
     
     # Укажи правильный URL: замените <your-app-name> на имя твоего приложения на Render
-    webhook_url = f"https://<your-app-name>.onrender.com/webhook"
+    webhook_url = f"https://spampython-bot-py.onrender.com/webhook"
     await app.bot.set_webhook(webhook_url)
     
     await app.run_webhook(listen="0.0.0.0", port=port, url_path="webhook")
