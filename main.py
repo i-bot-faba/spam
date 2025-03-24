@@ -12,15 +12,22 @@ nest_asyncio.apply()
 
 ADMIN_CHAT_ID = 296920330  # Твой числовой ID
 
+# Список запрещённых полных имён в формате "first_name | last_name"
+BANNED_FULL_NAMES = [
+    "Алексей | Бизнес на автомойках",
+    "Имя2 | Дополнительная информация",
+    "Имя3 | Ещё информация"
+]
+
 def get_tyumen_time():
-    # Предполагаем, что Тюменское время = UTC+5
+    # Тюменское время (UTC+5)
     return (datetime.utcnow() + timedelta(hours=5)).strftime('%Y-%m-%d %H:%M:%S')
 
 def get_chat_link(chat):
     if chat.username:
         return f"https://t.me/{chat.username}"
     elif chat.title:
-        return f"https://t.me/{chat.title.replace(' ', '')}"  # если нет username, формируем ссылку на основе title (без пробелов)
+        return f"https://t.me/{chat.title.replace(' ', '')}"
     else:
         return f"Chat ID: {chat.id}"
 
@@ -30,11 +37,10 @@ async def send_admin_notification(bot, text: str) -> None:
     except Exception as e:
         print("Error sending admin notification:", e)
 
-# Оригинальные спам-слова и спам-фразы (оставляем пустыми)
+# Если не используются – оставляем пустыми
 SPAM_WORDS = []      
 SPAM_PHRASES = []    
 
-# Фразы для постоянной блокировки
 PERMANENT_BLOCK_PHRASES = [
     "хватит жить на мели!",
     "начни зарабатывать",
@@ -56,7 +62,6 @@ PERMANENT_BLOCK_PHRASES = [
     "безвозвратно поделиться"
 ]
 
-# Комбинации слов для блокировки
 COMBINED_BLOCKS = [
     ["трейдинг", "инвестиции", "криптовалюты"],
     ["трейдинг", "недвижимость"],
@@ -64,14 +69,12 @@ COMBINED_BLOCKS = [
     ["трейдинг", "торговля"]
 ]
 
-# Обработчик вступления новых участников: ограничение на 180 секунд, удаление уведомления.
 async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if msg and msg.new_chat_members:
-        print("New members joined:", [member.id for member in msg.new_chat_members])
         chat_link = get_chat_link(msg.chat)
         for member in msg.new_chat_members:
-            until_date = int(time.time()) + 180  # ограничение на 180 секунд
+            until_date = int(time.time()) + 300  # Ограничение на 300 секунд для новых участников
             try:
                 await context.bot.restrict_chat_member(
                     chat_id=msg.chat.id,
@@ -87,7 +90,6 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
                 print(f"New member {member.id} restricted for 30 seconds in chat {msg.chat.id} ({chat_link}).")
             except Exception as e:
                 print("Error restricting new member:", e)
-        # Удаляем уведомление о вступлении
         try:
             await context.bot.delete_message(
                 chat_id=msg.chat.id,
@@ -97,7 +99,6 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception as e:
             print("Error deleting join notification message:", e)
 
-# Обработчик уведомлений о выходе – удаляем сообщение, не отправляя уведомления админу.
 async def delete_left_member_notification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if msg and msg.left_chat_member:
@@ -110,45 +111,51 @@ async def delete_left_member_notification(update: Update, context: ContextTypes.
         except Exception as e:
             print("Error deleting left member notification:", e)
 
-# Обработчик спам-сообщений: удаляет сообщение, банит пользователя и отправляет админу уведомление.
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message or update.channel_post
     if msg and msg.text:
         text = msg.text.lower()
         print("Received message:", text)
         permanent_ban = False
+        user = msg.from_user
 
-        for phrase in PERMANENT_BLOCK_PHRASES:
-            if phrase in text:
-                print(f"Permanent block phrase detected: {phrase}")
-                permanent_ban = True
-                break
+        # Формируем полное имя в формате "first_name | last_name"
+        full_name = user.first_name if user.first_name else ""
+        if user.last_name:
+            full_name += " | " + user.last_name
+
+        # Проверка по запрещённым полным именам
+        if full_name in BANNED_FULL_NAMES:
+            print(f"Banned full name detected: {full_name}")
+            permanent_ban = True
+
+        if not permanent_ban:
+            for phrase in PERMANENT_BLOCK_PHRASES:
+                if phrase in text:
+                    permanent_ban = True
+                    break
 
         if not permanent_ban:
             for combo in COMBINED_BLOCKS:
                 if all(word in text for word in combo):
-                    print(f"Combined block detected: {combo}")
                     permanent_ban = True
                     break
 
         if not permanent_ban:
             for word in SPAM_WORDS:
                 if re.search(r'\b' + re.escape(word) + r'\b', text):
-                    print(f"Spam word detected: {word}")
                     permanent_ban = True
                     break
             if not permanent_ban:
                 for phrase in SPAM_PHRASES:
                     if phrase in text:
-                        print(f"Spam phrase detected: {phrase}")
                         permanent_ban = True
                         break
 
         if permanent_ban:
-            user = msg.from_user
-            username = f"@{user.username}" if user.username else (user.first_name or str(user.id))
             chat_link = get_chat_link(msg.chat)
-            block_time = get_tyumen_time()  # Используем Тюменское время для даты блокировки
+            block_time = get_tyumen_time()
+            username = f"@{user.username}" if user.username else (user.first_name or str(user.id))
             notif = (f"Никнейм: {username}\n"
                      f"Дата блокировки: {block_time}\n"
                      f"Название канала: {chat_link}\n"
@@ -177,17 +184,13 @@ async def init_app():
     TOKEN = os.environ.get("BOT_TOKEN")
     if not TOKEN:
         raise ValueError("BOT_TOKEN не задан в переменных окружения")
-    
     app_bot = ApplicationBuilder().token(TOKEN).build()
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_left_member_notification))
     app_bot.add_handler(MessageHandler(filters.ALL, delete_spam_message))
-    
     await app_bot.initialize()
-    
     webhook_url = "https://spampython-bot-py.onrender.com/webhook"
     await app_bot.bot.set_webhook(webhook_url)
-    
     aio_app = web.Application()
     async def health(request):
         return web.Response(text="OK")
@@ -198,7 +201,6 @@ async def init_app():
         await app_bot.process_update(update)
         return web.Response(text="OK")
     aio_app.router.add_post("/webhook", handle_webhook)
-    
     return aio_app, port
 
 async def main():
