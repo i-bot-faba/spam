@@ -31,6 +31,20 @@ def get_chat_link(chat):
     else:
         return f"Chat ID: {chat.id}"
 
+def normalize_text(text: str) -> str:
+    # Приводим текст к нижнему регистру и заменяем похожие латинские символы на кириллические
+    mapping = {
+        'a': 'а',
+        'c': 'с',
+        'e': 'е',
+        'o': 'о',
+        'p': 'р',
+        'y': 'у',
+        'x': 'х'
+    }
+    text = text.lower()
+    return ''.join(mapping.get(ch, ch) for ch in text)
+
 async def send_admin_notification(bot, text: str) -> None:
     try:
         await bot.send_message(chat_id=ADMIN_CHAT_ID, text=text)
@@ -87,7 +101,7 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
                     ),
                     until_date=until_date
                 )
-                print(f"New member {member.id} restricted for 30 seconds in chat {msg.chat.id} ({chat_link}).")
+                print(f"New member {member.id} restricted for 300 seconds in chat {msg.chat.id} ({chat_link}).")
             except Exception as e:
                 print("Error restricting new member:", e)
         try:
@@ -114,8 +128,9 @@ async def delete_left_member_notification(update: Update, context: ContextTypes.
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message or update.channel_post
     if msg and msg.text:
-        text = msg.text.lower()
-        print("Received message:", text)
+        text = msg.text
+        normalized_text = normalize_text(text)
+        print("Received message:", normalized_text)
         permanent_ban = False
         user = msg.from_user
 
@@ -124,31 +139,31 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if user.last_name:
             full_name += " | " + user.last_name
 
-        # Проверка по запрещённым полным именам
-        if full_name in BANNED_FULL_NAMES:
+        # Проверка по запрещённым полным именам (с нормализацией)
+        if normalize_text(full_name) in [normalize_text(name) for name in BANNED_FULL_NAMES]:
             print(f"Banned full name detected: {full_name}")
             permanent_ban = True
 
         if not permanent_ban:
             for phrase in PERMANENT_BLOCK_PHRASES:
-                if phrase in text:
+                if normalize_text(phrase) in normalized_text:
                     permanent_ban = True
                     break
 
         if not permanent_ban:
             for combo in COMBINED_BLOCKS:
-                if all(word in text for word in combo):
+                if all(normalize_text(word) in normalized_text for word in combo):
                     permanent_ban = True
                     break
 
         if not permanent_ban:
             for word in SPAM_WORDS:
-                if re.search(r'\b' + re.escape(word) + r'\b', text):
+                if re.search(r'\b' + re.escape(normalize_text(word)) + r'\b', normalized_text):
                     permanent_ban = True
                     break
             if not permanent_ban:
                 for phrase in SPAM_PHRASES:
-                    if phrase in text:
+                    if normalize_text(phrase) in normalized_text:
                         permanent_ban = True
                         break
 
