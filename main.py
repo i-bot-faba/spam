@@ -197,7 +197,7 @@ async def init_app():
     TOKEN = os.environ.get("BOT_TOKEN")
     if not TOKEN:
         raise ValueError("BOT_TOKEN не задан в переменных окружения")
-    from telegram.request.request import Request
+    from telegram.request import Request
     request = Request(con_pool_size=20, pool_timeout=10)
     app_bot = ApplicationBuilder().token(TOKEN).request(request).build()
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
