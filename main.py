@@ -209,23 +209,35 @@ async def init_app():
     TOKEN = os.environ.get("BOT_TOKEN")
     if not TOKEN:
         raise ValueError("BOT_TOKEN не задан в переменных окружения")
-    app_bot = ApplicationBuilder().token(TOKEN).build()
+    # Импортируем Request и создаём его с увеличенным пулом соединений
+    from telegram.request import Request
+    request = Request(con_pool_size=20, pool_timeout=10)
+    
+    # Передаём объект request в ApplicationBuilder
+    app_bot = ApplicationBuilder().token(TOKEN).request(request).build()
+    
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_left_member_notification))
     app_bot.add_handler(MessageHandler(filters.ALL, delete_spam_message))
+    
     await app_bot.initialize()
+    
     webhook_url = "https://spampython-bot-py.onrender.com/webhook"
     await app_bot.bot.set_webhook(webhook_url)
+    
     aio_app = web.Application()
+    
     async def health(request):
         return web.Response(text="OK")
     aio_app.router.add_get("/", health)
+    
     async def handle_webhook(request):
         data = await request.json()
         update = Update.de_json(data, app_bot.bot)
         await app_bot.process_update(update)
         return web.Response(text="OK")
     aio_app.router.add_post("/webhook", handle_webhook)
+    
     return aio_app, port
 
 async def main():
