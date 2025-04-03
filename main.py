@@ -240,3 +240,8 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+else:
+    # Если модуль импортируется (например, Gunicorn импортирует main:app),
+    # создаём переменную app, используя event loop.
+    loop = asyncio.get_event_loop()
+    app, _ = loop.run_until_complete(init_app())
