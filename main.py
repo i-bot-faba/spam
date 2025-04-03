@@ -50,6 +50,11 @@ async def send_admin_notification(bot, text: str) -> None:
     except Exception as e:
         print("Error sending admin notification:", e)
 
+try:
+    from telegram.request.request import Request
+except ImportError:
+    from telegram.request import Request
+
 # Если не используются – оставляем пустыми
 SPAM_WORDS = []
 SPAM_PHRASES = []
