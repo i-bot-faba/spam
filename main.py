@@ -15,11 +15,8 @@ ADMIN_CHAT_ID = 296920330  # Твой числовой ID
 # Список запрещённых полных имён в формате "first_name | last_name"
 BANNED_FULL_NAMES = [
     "Алексей | Бизнес на автомойках",
-    "Сделала мужу x2 💸",
-    "Сделала мужу x2💸",
     "Сделала мужу x2",
-    "Алексей | Инвестиции не работают?",
-    "Таисия | HUNTME"
+    "Имя3 | Ещё информация"
 ]
 
 def get_tyumen_time():
@@ -35,7 +32,6 @@ def get_chat_link(chat):
         return f"Chat ID: {chat.id}"
 
 def normalize_text(text: str) -> str:
-    # Приводим текст к нижнему регистру и заменяем похожие латинские символы на кириллические
     mapping = {
         'a': 'а',
         'c': 'с',
@@ -55,8 +51,8 @@ async def send_admin_notification(bot, text: str) -> None:
         print("Error sending admin notification:", e)
 
 # Если не используются – оставляем пустыми
-SPAM_WORDS = []      
-SPAM_PHRASES = []    
+SPAM_WORDS = []
+SPAM_PHRASES = []
 
 PERMANENT_BLOCK_PHRASES = [
     "хватит жить на мели!",
@@ -77,19 +73,12 @@ PERMANENT_BLOCK_PHRASES = [
     "сорос",
     "курсы по инвестициям",
     "безвозвратно поделиться"
-    "Хочешь зарабатывать"
-    "от 12к в день"
-    "от 11к в день"
-    "от 10к в день"
 ]
 
 COMBINED_BLOCKS = [
     ["трейдинг", "инвестиции", "криптовалюты"],
     ["трейдинг", "недвижимость"],
     ["трейдинг", "инвестиции"],
-    ["методички", "инвестиции"],
-    ["криптоиндустрия", "инвестиции"],
-    ["недвижимость", "инвестиции"],
     ["трейдинг", "торговля"]
 ]
 
@@ -149,7 +138,6 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if user.last_name:
             full_name += " | " + user.last_name
 
-        # Проверка по запрещённым полным именам (с нормализацией)
         if normalize_text(full_name) in [normalize_text(name) for name in BANNED_FULL_NAMES]:
             print(f"Banned full name detected: {full_name}")
             permanent_ban = True
@@ -209,36 +197,25 @@ async def init_app():
     TOKEN = os.environ.get("BOT_TOKEN")
     if not TOKEN:
         raise ValueError("BOT_TOKEN не задан в переменных окружения")
-    # Импортируем Request и создаём его с увеличенным пулом соединений
     from telegram.request.request import Request
-request = Request(con_pool_size=20, pool_timeout=10)
-app_bot = ApplicationBuilder().token(TOKEN).request(request).build()
-    
-    # Передаём объект request в ApplicationBuilder
+    request = Request(con_pool_size=20, pool_timeout=10)
     app_bot = ApplicationBuilder().token(TOKEN).request(request).build()
-    
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_left_member_notification))
     app_bot.add_handler(MessageHandler(filters.ALL, delete_spam_message))
-    
     await app_bot.initialize()
-    
     webhook_url = "https://spampython-bot-py.onrender.com/webhook"
     await app_bot.bot.set_webhook(webhook_url)
-    
     aio_app = web.Application()
-    
     async def health(request):
         return web.Response(text="OK")
     aio_app.router.add_get("/", health)
-    
     async def handle_webhook(request):
         data = await request.json()
         update = Update.de_json(data, app_bot.bot)
         await app_bot.process_update(update)
         return web.Response(text="OK")
     aio_app.router.add_post("/webhook", handle_webhook)
-    
     return aio_app, port
 
 async def main():
@@ -254,7 +231,5 @@ async def main():
 if __name__ == '__main__':
     asyncio.run(main())
 else:
-    # Если модуль импортируется (например, Gunicorn импортирует main:app),
-    # создаём переменную app, используя event loop.
     loop = asyncio.get_event_loop()
     app, _ = loop.run_until_complete(init_app())
