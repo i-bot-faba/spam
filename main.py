@@ -210,8 +210,9 @@ async def init_app():
     if not TOKEN:
         raise ValueError("BOT_TOKEN не задан в переменных окружения")
     # Импортируем Request и создаём его с увеличенным пулом соединений
-    from telegram.request import Request
-    request = Request(con_pool_size=20, pool_timeout=10)
+    from telegram.request.request import Request
+request = Request(con_pool_size=20, pool_timeout=10)
+app_bot = ApplicationBuilder().token(TOKEN).request(request).build()
     
     # Передаём объект request в ApplicationBuilder
     app_bot = ApplicationBuilder().token(TOKEN).request(request).build()
