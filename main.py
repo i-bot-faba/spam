@@ -51,7 +51,7 @@ async def send_admin_notification(bot, text: str) -> None:
         print("Error sending admin notification:", e)
 
 try:
-    from telegram.request import Request
+    from telegram.utils.request import Request
 except ImportError:
     from telegram.request.default import DefaultRequest as Request
 
