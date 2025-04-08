@@ -20,7 +20,7 @@ BANNED_FULL_NAMES = [
     "Фрейд | Улыбаемся и плачем: Психология по фрейду",
     "﻿Алексей | Деньги должны работать",
     "Павел ● Бухгалтерия без паники",
-    "Имя3 | Ещё информация",
+    "Финдиp 75O🍋",
     "Имя3 | Ещё информация"
 ]
 
@@ -150,6 +150,11 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if user.last_name:
             full_name += " | " + user.last_name
 
+        # Проверяем, содержится ли запрещённый символ в полном имени
+        if "💦" in full_name:
+            print(f"Blocked symbol 💦 detected in full name: {full_name}")
+            permanent_ban = True
+            
         # Проверка по запрещённым полным именам (с нормализацией)
         if normalize_text(full_name) in [normalize_text(name) for name in BANNED_FULL_NAMES]:
             print(f"Banned full name detected: {full_name}")
