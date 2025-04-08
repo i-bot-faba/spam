@@ -82,6 +82,8 @@ PERMANENT_BLOCK_PHRASES = [
     "PAWS",
     "курсы по инвестициям",
     "FREE DOGS",
+    "мoгy cкинyть, бeзвoзмeзднo",
+    "ecть пoдбopкa пo инвecтициям",
     "безвозвратно поделиться"
 ]
 
