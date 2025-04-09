@@ -3,6 +3,7 @@ import asyncio
 import re
 import nest_asyncio
 import time
+import json
 from datetime import datetime, timedelta
 from aiohttp import web
 from telegram import Update, ChatPermissions
@@ -10,17 +11,21 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTyp
 
 nest_asyncio.apply()
 
-ADMIN_CHAT_ID = 296920330  # Твой числовой ID
+# Загрузка конфигурации из файла config.json
+def load_config():
+    config_path = os.path.join(os.path.dirname(__file__), "config.json")
+    with open(config_path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-# Список запрещённых полных имён в формате "first_name | last_name"
-BANNED_FULL_NAMES = [
-    "Алексей | Бизнес на автомойках",
-    "Сделала мужу x2",
-    "FREE $DOGS",
-    "Алексей | Деньги должны работать",
-    "HUNTME",
-    "Имя3 | Ещё информация"
-]
+config = load_config()
+
+# Использование настроек из конфигурации:
+BANNED_FULL_NAMES = config.get("BANNED_FULL_NAMES", [])
+PERMANENT_BLOCK_PHRASES = config.get("PERMANENT_BLOCK_PHRASES", [])
+COMBINED_BLOCKS = config.get("COMBINED_BLOCKS", [])
+BANNED_SYMBOLS = config.get("BANNED_SYMBOLS", [])
+
+ADMIN_CHAT_ID = 296920330  # Твой числовой ID
 
 def get_tyumen_time():
     # Тюменское время (UTC+5)
@@ -44,8 +49,7 @@ def normalize_text(text: str) -> str:
         'y': 'у',
         'x': 'х'
     }
-    text = text.lower()
-    return ''.join(mapping.get(ch, ch) for ch in text)
+    return ''.join(mapping.get(ch, ch) for ch in text.lower())
 
 async def send_admin_notification(bot, text: str) -> None:
     try:
@@ -56,35 +60,6 @@ async def send_admin_notification(bot, text: str) -> None:
 # Если не используются – оставляем пустыми
 SPAM_WORDS = []
 SPAM_PHRASES = []
-
-PERMANENT_BLOCK_PHRASES = [
-    "хватит жить на мели!",
-    "начни зарабатывать",
-    "хватит сидеть без денег!",
-    "давай заработаем",
-    "от 8000р в день",
-    "от 9000р в день",
-    "от 10000р в день",
-    "от 11000р в день",
-    "от 12000р в день",
-    "от 13000р в день",
-    "от 14000р в день",
-    "приобрёл полезные курсы",
-    "курсы по торговле",
-    "курсы по трейдингу",
-    "дочитываю книгу",
-    "сорос",
-    "курсы по инвестициям",
-    "Забери свое вознаграждение прямо сейчас",
-    "безвозвратно поделиться"
-]
-
-COMBINED_BLOCKS = [
-    ["трейдинг", "инвестиции", "криптовалюты"],
-    ["трейдинг", "недвижимость"],
-    ["трейдинг", "инвестиции"],
-    ["трейдинг", "торговля"]
-]
 
 async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
@@ -142,13 +117,13 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if user.last_name:
             full_name += " | " + user.last_name
 
+        # Проверка по запрещённым полным именам
         if normalize_text(full_name) in [normalize_text(name) for name in BANNED_FULL_NAMES]:
             print(f"Banned full name detected: {full_name}")
             permanent_ban = True
 
-        # Проверка на запрещённые символы в полном имени
-        banned_symbols = ["💦", "🍋"]
-        if any(symbol in full_name for symbol in banned_symbols):
+        # Проверка по запрещённым символам в имени
+        if any(symbol in full_name for symbol in BANNED_SYMBOLS):
             print(f"Banned symbol detected in full name: {full_name}")
             permanent_ban = True
 
@@ -208,7 +183,7 @@ async def init_app():
     if not TOKEN:
         raise ValueError("BOT_TOKEN не задан в переменных окружения")
     
-    # Используем настройки по умолчанию (без передачи кастомного Request)
+    # Создаем приложение бота без кастомного Request
     app_bot = ApplicationBuilder().token(TOKEN).build()
     
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
@@ -221,9 +196,11 @@ async def init_app():
     await app_bot.bot.set_webhook(webhook_url)
     
     aio_app = web.Application()
+    
     async def health(request):
         return web.Response(text="OK")
     aio_app.router.add_get("/", health)
+    
     async def handle_webhook(request):
         data = await request.json()
         update = Update.de_json(data, app_bot.bot)
