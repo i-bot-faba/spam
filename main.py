@@ -16,11 +16,6 @@ ADMIN_CHAT_ID = 296920330  # Твой числовой ID
 BANNED_FULL_NAMES = [
     "Алексей | Бизнес на автомойках",
     "Сделала мужу x2",
-    "Алина АГЕНТ HUNTME 💸",
-    "Фрейд | Улыбаемся и плачем: Психология по фрейду",
-    "﻿Алексей | Деньги должны работать",
-    "Павел ● Бухгалтерия без паники",
-    "Финдиp 75O🍋",
     "Имя3 | Ещё информация"
 ]
 
@@ -37,7 +32,6 @@ def get_chat_link(chat):
         return f"Chat ID: {chat.id}"
 
 def normalize_text(text: str) -> str:
-    # Приводим текст к нижнему регистру и заменяем похожие латинские символы на кириллические
     mapping = {
         'a': 'а',
         'c': 'с',
@@ -56,9 +50,14 @@ async def send_admin_notification(bot, text: str) -> None:
     except Exception as e:
         print("Error sending admin notification:", e)
 
+try:
+    from telegram.request import Request
+except ImportError:
+    from telegram.request.default import DefaultRequest as Request
+
 # Если не используются – оставляем пустыми
-SPAM_WORDS = []      
-SPAM_PHRASES = []    
+SPAM_WORDS = []
+SPAM_PHRASES = []
 
 PERMANENT_BLOCK_PHRASES = [
     "хватит жить на мели!",
@@ -66,8 +65,6 @@ PERMANENT_BLOCK_PHRASES = [
     "хватит сидеть без денег!",
     "давай заработаем",
     "от 8000р в день",
-    "Хочешь узнать больше",
-    "Хочешь узнать больше",
     "от 9000р в день",
     "от 10000р в день",
     "от 11000р в день",
@@ -79,11 +76,7 @@ PERMANENT_BLOCK_PHRASES = [
     "курсы по трейдингу",
     "дочитываю книгу",
     "сорос",
-    "PAWS",
     "курсы по инвестициям",
-    "FREE DOGS",
-    "мoгy cкинyть, бeзвoзмeзднo",
-    "ecть пoдбopкa пo инвecтициям",
     "безвозвратно поделиться"
 ]
 
@@ -150,14 +143,15 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if user.last_name:
             full_name += " | " + user.last_name
 
-        # Проверяем, содержится ли запрещённый символ в полном имени
-        if "💦" in full_name:
-            print(f"Blocked symbol 💦 detected in full name: {full_name}")
-            permanent_ban = True
-            
-        # Проверка по запрещённым полным именам (с нормализацией)
+        # Проверка по запрещённым полным именам
         if normalize_text(full_name) in [normalize_text(name) for name in BANNED_FULL_NAMES]:
             print(f"Banned full name detected: {full_name}")
+            permanent_ban = True
+
+        # Проверка по запрещённым символам
+        banned_symbols = ["💦", "🍋"]
+        if any(symbol in full_name for symbol in banned_symbols):
+            print(f"Banned symbol detected in full name: {full_name}")
             permanent_ban = True
 
         if not permanent_ban:
@@ -215,13 +209,24 @@ async def init_app():
     TOKEN = os.environ.get("BOT_TOKEN")
     if not TOKEN:
         raise ValueError("BOT_TOKEN не задан в переменных окружения")
-    app_bot = ApplicationBuilder().token(TOKEN).build()
+    
+    try:
+        from telegram.request import Request
+    except ImportError:
+        from telegram.request.default import DefaultRequest as Request
+
+    request = Request(con_pool_size=20, pool_timeout=10)
+    app_bot = ApplicationBuilder().token(TOKEN).request(request).build()
+    
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_left_member_notification))
     app_bot.add_handler(MessageHandler(filters.ALL, delete_spam_message))
+    
     await app_bot.initialize()
+    
     webhook_url = "https://spampython-bot-py.onrender.com/webhook"
     await app_bot.bot.set_webhook(webhook_url)
+    
     aio_app = web.Application()
     async def health(request):
         return web.Response(text="OK")
@@ -232,6 +237,7 @@ async def init_app():
         await app_bot.process_update(update)
         return web.Response(text="OK")
     aio_app.router.add_post("/webhook", handle_webhook)
+    
     return aio_app, port
 
 async def main():
@@ -246,3 +252,6 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+else:
+    loop = asyncio.get_event_loop()
+    app, _ = loop.run_until_complete(init_app())
