@@ -50,11 +50,6 @@ async def send_admin_notification(bot, text: str) -> None:
     except Exception as e:
         print("Error sending admin notification:", e)
 
-try:
-    from telegram.request import Request
-except ImportError:
-    from telegram.request.default import DefaultRequest as Request
-
 # Если не используются – оставляем пустыми
 SPAM_WORDS = []
 SPAM_PHRASES = []
@@ -143,12 +138,11 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if user.last_name:
             full_name += " | " + user.last_name
 
-        # Проверка по запрещённым полным именам
         if normalize_text(full_name) in [normalize_text(name) for name in BANNED_FULL_NAMES]:
             print(f"Banned full name detected: {full_name}")
             permanent_ban = True
 
-        # Проверка по запрещённым символам
+        # Проверка на запрещённые символы в полном имени
         banned_symbols = ["💦", "🍋"]
         if any(symbol in full_name for symbol in banned_symbols):
             print(f"Banned symbol detected in full name: {full_name}")
@@ -210,13 +204,8 @@ async def init_app():
     if not TOKEN:
         raise ValueError("BOT_TOKEN не задан в переменных окружения")
     
-    try:
-        from telegram.request import Request
-    except ImportError:
-        from telegram.request.default import DefaultRequest as Request
-
-    request = Request(con_pool_size=20, pool_timeout=10)
-    app_bot = ApplicationBuilder().token(TOKEN).request(request).build()
+    # Используем настройки по умолчанию (без передачи кастомного Request)
+    app_bot = ApplicationBuilder().token(TOKEN).build()
     
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_left_member_notification))
