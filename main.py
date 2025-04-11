@@ -47,7 +47,9 @@ def normalize_text(text: str) -> str:
         'o': 'о',
         'p': 'р',
         'y': 'у',
-        'x': 'х'
+        'x': 'х',
+        '3': 'з',
+        '0': 'о'
     }
     return ''.join(mapping.get(ch, ch) for ch in text.lower())
 
