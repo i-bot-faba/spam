@@ -8,8 +8,10 @@ from datetime import datetime, timedelta
 from aiohttp import web
 from telegram import Update, ChatPermissions
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+import pymorphy2
 
 nest_asyncio.apply()
+morph = pymorphy2.MorphAnalyzer()
 
 # Загрузка конфигурации из файла config.json
 def load_config():
@@ -19,7 +21,7 @@ def load_config():
 
 config = load_config()
 
-# Использование настроек из конфигурации:
+# Использование настроек из конфигурации
 BANNED_FULL_NAMES = config.get("BANNED_FULL_NAMES", [])
 PERMANENT_BLOCK_PHRASES = config.get("PERMANENT_BLOCK_PHRASES", [])
 COMBINED_BLOCKS = config.get("COMBINED_BLOCKS", [])
@@ -52,6 +54,12 @@ def normalize_text(text: str) -> str:
         '0': 'о'
     }
     return ''.join(mapping.get(ch, ch) for ch in text.lower())
+
+def lemmatize_text(text: str) -> str:
+    # Разбиваем текст на слова и приводим каждое к начальной форме
+    words = text.split()
+    lemmatized_words = [morph.parse(word)[0].normal_form for word in words]
+    return ' '.join(lemmatized_words)
 
 async def send_admin_notification(bot, text: str) -> None:
     try:
@@ -109,8 +117,9 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     msg = update.message or update.channel_post
     if msg and msg.text:
         text = msg.text
-        normalized_text = normalize_text(text)
-        print("Received message:", normalized_text)
+        # Сначала нормализуем, затем лемматизируем текст сообщения
+        processed_text = lemmatize_text(normalize_text(text))
+        print("Processed message:", processed_text)
         permanent_ban = False
         user = msg.from_user
 
@@ -120,7 +129,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             full_name += " | " + user.last_name
 
         # Проверка по запрещённым полным именам
-        if normalize_text(full_name) in [normalize_text(name) for name in BANNED_FULL_NAMES]:
+        if lemmatize_text(normalize_text(full_name)) in [lemmatize_text(normalize_text(name)) for name in BANNED_FULL_NAMES]:
             print(f"Banned full name detected: {full_name}")
             permanent_ban = True
 
@@ -131,24 +140,25 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         if not permanent_ban:
             for phrase in PERMANENT_BLOCK_PHRASES:
-                if normalize_text(phrase) in normalized_text:
+                # Сравниваем лемматизированный текст фразы с обработанным текстом сообщения
+                if lemmatize_text(normalize_text(phrase)) in processed_text:
                     permanent_ban = True
                     break
 
         if not permanent_ban:
             for combo in COMBINED_BLOCKS:
-                if all(normalize_text(word) in normalized_text for word in combo):
+                if all(lemmatize_text(normalize_text(word)) in processed_text for word in combo):
                     permanent_ban = True
                     break
 
         if not permanent_ban:
             for word in SPAM_WORDS:
-                if re.search(r'\b' + re.escape(normalize_text(word)) + r'\b', normalized_text):
+                if re.search(r'\b' + re.escape(lemmatize_text(normalize_text(word))) + r'\b', processed_text):
                     permanent_ban = True
                     break
             if not permanent_ban:
                 for phrase in SPAM_PHRASES:
-                    if normalize_text(phrase) in normalized_text:
+                    if lemmatize_text(normalize_text(phrase)) in processed_text:
                         permanent_ban = True
                         break
 
@@ -181,7 +191,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def init_app():
     port = int(os.environ.get("PORT", 8443))
-    TOKEN = os.environ.get("BOT_TOKEN")
+    TOKEN = os.getenv("BOT_TOKEN")
     if not TOKEN:
         raise ValueError("BOT_TOKEN не задан в переменных окружения")
     
