@@ -8,10 +8,16 @@ from datetime import datetime, timedelta
 from aiohttp import web
 from telegram import Update, ChatPermissions
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+
+# Добавляем workaround для Python 3.11: переопределяем inspect.getargspec
+import inspect
+if not hasattr(inspect, 'getargspec'):
+    inspect.getargspec = inspect.getfullargspec
+
 import pymorphy2
+morph = pymorphy2.MorphAnalyzer()
 
 nest_asyncio.apply()
-morph = pymorphy2.MorphAnalyzer()
 
 # Загрузка конфигурации из файла config.json
 def load_config():
@@ -21,7 +27,7 @@ def load_config():
 
 config = load_config()
 
-# Использование настроек из конфигурации
+# Использование настроек из конфига
 BANNED_FULL_NAMES = config.get("BANNED_FULL_NAMES", [])
 PERMANENT_BLOCK_PHRASES = config.get("PERMANENT_BLOCK_PHRASES", [])
 COMBINED_BLOCKS = config.get("COMBINED_BLOCKS", [])
@@ -56,7 +62,6 @@ def normalize_text(text: str) -> str:
     return ''.join(mapping.get(ch, ch) for ch in text.lower())
 
 def lemmatize_text(text: str) -> str:
-    # Разбиваем текст на слова и приводим каждое к начальной форме
     words = text.split()
     lemmatized_words = [morph.parse(word)[0].normal_form for word in words]
     return ' '.join(lemmatized_words)
@@ -117,7 +122,6 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     msg = update.message or update.channel_post
     if msg and msg.text:
         text = msg.text
-        # Сначала нормализуем, затем лемматизируем текст сообщения
         processed_text = lemmatize_text(normalize_text(text))
         print("Processed message:", processed_text)
         permanent_ban = False
@@ -140,7 +144,6 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         if not permanent_ban:
             for phrase in PERMANENT_BLOCK_PHRASES:
-                # Сравниваем лемматизированный текст фразы с обработанным текстом сообщения
                 if lemmatize_text(normalize_text(phrase)) in processed_text:
                     permanent_ban = True
                     break
@@ -208,11 +211,9 @@ async def init_app():
     await app_bot.bot.set_webhook(webhook_url)
     
     aio_app = web.Application()
-    
     async def health(request):
         return web.Response(text="OK")
     aio_app.router.add_get("/", health)
-    
     async def handle_webhook(request):
         data = await request.json()
         update = Update.de_json(data, app_bot.bot)
