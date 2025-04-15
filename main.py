@@ -1,3 +1,31 @@
+import inspect
+from collections import namedtuple
+
+# Создаём аналог старого ArgSpec
+ArgSpec = namedtuple("ArgSpec", "args varargs keywords defaults")
+
+def fix_getargspec(func):
+    """
+    Преобразует результат getfullargspec(func) в старый формат, 
+    ожидаемый pymorphy2 (args, varargs, keywords, defaults).
+    """
+    spec = inspect.getfullargspec(func)
+    return ArgSpec(
+        args=spec.args,
+        varargs=spec.varargs,
+        keywords=spec.varkw,
+        defaults=spec.defaults
+    )
+
+# Monkey Patch: переопределяем inspect.getargspec
+inspect.getargspec = fix_getargspec
+
+# Теперь импортируем pymorphy2
+import pymorphy2
+morph = pymorphy2.MorphAnalyzer()
+
+# --- Далее остальной код вашего бота ---
+
 import os
 import asyncio
 import re
@@ -6,16 +34,11 @@ import time
 import json
 from datetime import datetime, timedelta
 from aiohttp import web
-
-# Убедитесь, что Python == 3.10
-import pymorphy2
 from telegram import Update, ChatPermissions
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 
 nest_asyncio.apply()
-morph = pymorphy2.MorphAnalyzer()
 
-# 1. Загружаем конфигурацию из файла config.json
 def load_config():
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
     with open(config_path, "r", encoding="utf-8") as f:
@@ -28,10 +51,9 @@ PERMANENT_BLOCK_PHRASES = config.get("PERMANENT_BLOCK_PHRASES", [])
 COMBINED_BLOCKS = config.get("COMBINED_BLOCKS", [])
 BANNED_SYMBOLS = config.get("BANNED_SYMBOLS", [])
 
-ADMIN_CHAT_ID = 296920330  # Ваш Telegram ID (для уведомлений)
+ADMIN_CHAT_ID = 296920330  # Твой ID
 
 def get_tyumen_time():
-    # Тюменское время (UTC+5)
     return (datetime.utcnow() + timedelta(hours=5)).strftime('%Y-%m-%d %H:%M:%S')
 
 def get_chat_link(chat):
@@ -42,7 +64,7 @@ def get_chat_link(chat):
     else:
         return f"Chat ID: {chat.id}"
 
-# 2. Нормализация (замена латинских символов на кириллические)
+# Нормализация (латинские символы → кириллические)
 def normalize_text(text: str) -> str:
     mapping = {
         'a': 'а',
@@ -57,7 +79,7 @@ def normalize_text(text: str) -> str:
     }
     return ''.join(mapping.get(ch, ch) for ch in text.lower())
 
-# 3. Лемматизация с помощью pymorphy2
+# Лемматизация через pymorphy2
 def lemmatize_text(text: str) -> str:
     words = text.split()
     lemmatized_words = [morph.parse(word)[0].normal_form for word in words]
@@ -69,7 +91,6 @@ async def send_admin_notification(bot, text: str) -> None:
     except Exception as e:
         print("Error sending admin notification:", e)
 
-# Если не используются — оставляем пустыми
 SPAM_WORDS = []
 SPAM_PHRASES = []
 
@@ -78,7 +99,7 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
     if msg and msg.new_chat_members:
         chat_link = get_chat_link(msg.chat)
         for member in msg.new_chat_members:
-            until_date = int(time.time()) + 300  # Ограничение на 300 секунд для новых участников
+            until_date = int(time.time()) + 300
             try:
                 await context.bot.restrict_chat_member(
                     chat_id=msg.chat.id,
@@ -91,13 +112,11 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
                     ),
                     until_date=until_date
                 )
-                print(f"New member {member.id} restricted for 300 seconds in chat {msg.chat.id} ({chat_link}).")
+                print(f"New member {member.id} restricted for 300s in chat {msg.chat.id} ({chat_link}).")
             except Exception as e:
                 print("Error restricting new member:", e)
-        # Удаляем уведомление о вступлении
         try:
             await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
-            print("Deleted join notification message.")
         except Exception as e:
             print("Error deleting join notification message:", e)
 
@@ -114,46 +133,40 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     msg = update.message or update.channel_post
     if msg and msg.text:
         text = msg.text
-        # Лемматизируем + нормализуем (сначала нормализуем, потом лемматизируем)
         processed_text = lemmatize_text(normalize_text(text))
         print("Processed message:", processed_text)
         permanent_ban = False
         user = msg.from_user
 
-        # Формируем полное имя ("first_name | last_name")
+        # Формируем "first_name | last_name"
         full_name = user.first_name if user.first_name else ""
         if user.last_name:
             full_name += " | " + user.last_name
 
-        # 1) Проверка по запрещённым полным именам
         normalized_name = lemmatize_text(normalize_text(full_name))
         banned_names = [lemmatize_text(normalize_text(n)) for n in BANNED_FULL_NAMES]
+
         if normalized_name in banned_names:
-            print(f"Banned full name detected: {full_name}")
+            print(f"Banned full name: {full_name}")
             permanent_ban = True
 
-        # 2) Проверка по запрещённым символам в имени
         if any(symbol in full_name for symbol in BANNED_SYMBOLS):
-            print(f"Banned symbol detected in full name: {full_name}")
+            print(f"Banned symbol in full name: {full_name}")
             permanent_ban = True
 
-        # 3) Проверка PERMANENT_BLOCK_PHRASES
         if not permanent_ban:
             for phrase in PERMANENT_BLOCK_PHRASES:
-                normalized_phrase = lemmatize_text(normalize_text(phrase))
-                if normalized_phrase in processed_text:
+                norm_phrase = lemmatize_text(normalize_text(phrase))
+                if norm_phrase in processed_text:
                     permanent_ban = True
                     break
 
-        # 4) Проверка COMBINED_BLOCKS
         if not permanent_ban:
             for combo in COMBINED_BLOCKS:
-                # Все слова combo должны присутствовать в processed_text
                 if all(lemmatize_text(normalize_text(w)) in processed_text for w in combo):
                     permanent_ban = True
                     break
 
-        # 5) Дополнительная проверка SPAM_WORDS и SPAM_PHRASES (если заданы)
         if not permanent_ban:
             for word in SPAM_WORDS:
                 w = lemmatize_text(normalize_text(word))
@@ -168,7 +181,6 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                         permanent_ban = True
                         break
 
-        # Если хотя бы одно условие сработало
         if permanent_ban:
             chat_link = get_chat_link(msg.chat)
             block_time = get_tyumen_time()
@@ -194,35 +206,29 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def init_app():
     port = int(os.environ.get("PORT", 8443))
-    TOKEN = os.environ.get("BOT_TOKEN")
+    TOKEN = os.getenv("BOT_TOKEN")
     if not TOKEN:
-        raise ValueError("BOT_TOKEN не задан в переменных окружения")
+        raise ValueError("BOT_TOKEN not set")
     
-    # Создаем приложение бота
     app_bot = ApplicationBuilder().token(TOKEN).build()
-    
-    # Регистрируем обработчики
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_left_member_notification))
     app_bot.add_handler(MessageHandler(filters.ALL, delete_spam_message))
-    
+
     await app_bot.initialize()
     
-    webhook_url = "https://spampython-bot-py.onrender.com/webhook"
+    webhook_url = "https://your-app.onrender.com/webhook"  # замените на ваш реальный
     await app_bot.bot.set_webhook(webhook_url)
     
     aio_app = web.Application()
-    
     async def health(request):
         return web.Response(text="OK")
     aio_app.router.add_get("/", health)
-    
     async def handle_webhook(request):
         data = await request.json()
         update = Update.de_json(data, app_bot.bot)
         await app_bot.process_update(update)
         return web.Response(text="OK")
-    
     aio_app.router.add_post("/webhook", handle_webhook)
     
     return aio_app, port
