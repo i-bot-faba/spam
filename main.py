@@ -1,7 +1,7 @@
 import inspect
 from collections import namedtuple
 
-# Создаём аналог старого ArgSpec
+# Создаём аналог старого ArgSpec для pymorphy2 (обход ошибки в Python 3.11)
 ArgSpec = namedtuple("ArgSpec", "args varargs keywords defaults")
 
 def fix_getargspec(func):
@@ -17,7 +17,7 @@ def fix_getargspec(func):
         defaults=spec.defaults
     )
 
-# Monkey Patch: переопределяем inspect.getargspec до импорта pymorphy2
+# Monkey Patch: переопределяем inspect.getargspec, чтобы pymorphy2 не падал на Python 3.11
 inspect.getargspec = fix_getargspec
 
 # Теперь импортируем pymorphy2
@@ -25,6 +25,7 @@ import pymorphy2
 morph = pymorphy2.MorphAnalyzer()
 
 # --- Далее остальной код бота ---
+
 import os
 import asyncio
 import re
@@ -50,7 +51,7 @@ PERMANENT_BLOCK_PHRASES = config.get("PERMANENT_BLOCK_PHRASES", [])
 COMBINED_BLOCKS = config.get("COMBINED_BLOCKS", [])
 BANNED_SYMBOLS = config.get("BANNED_SYMBOLS", [])
 
-ADMIN_CHAT_ID = 296920330  # Укажите ваш ID
+ADMIN_CHAT_ID = 296920330  # Ваш телеграм ID
 
 def get_tyumen_time():
     # Тюменское время (UTC+5)
@@ -64,7 +65,7 @@ def get_chat_link(chat):
     else:
         return f"Chat ID: {chat.id}"
 
-# Функция нормализации (замена лат. букв и цифр на кириллические)
+# Расширенная нормализация (добавляем t->т, u->у, m->м, d->д, v->в, h->н, r->р, b->б и т.д.)
 def normalize_text(text: str) -> str:
     mapping = {
         'a': 'а',
@@ -75,11 +76,18 @@ def normalize_text(text: str) -> str:
         'y': 'у',
         'x': 'х',
         '3': 'з',
-        '0': 'о'
+        '0': 'о',
+        't': 'т',
+        'u': 'у',
+        'm': 'м',
+        'd': 'д',
+        'v': 'в',
+        'h': 'н',
+        'r': 'р',
+        'b': 'б'
     }
     return ''.join(mapping.get(ch, ch) for ch in text.lower())
 
-# Лемматизация через pymorphy2
 def lemmatize_text(text: str) -> str:
     words = text.split()
     lemmatized_words = [morph.parse(word)[0].normal_form for word in words]
@@ -91,10 +99,10 @@ async def send_admin_notification(bot, text: str) -> None:
     except Exception as e:
         print("Error sending admin notification:", e)
 
+# Если не используются – оставляем пустыми
 SPAM_WORDS = []
 SPAM_PHRASES = []
 
-# Ограничение новых участников (пример)
 async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if msg and msg.new_chat_members:
@@ -116,13 +124,11 @@ async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE
                 print(f"New member {member.id} restricted for 300s in chat {msg.chat.id} ({chat_link}).")
             except Exception as e:
                 print("Error restricting new member:", e)
-        # Удаляем уведомление о вступлении
         try:
             await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
         except Exception as e:
             print("Error deleting join notification message:", e)
 
-# Удаляем уведомление об уходе
 async def delete_left_member_notification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if msg and msg.left_chat_member:
@@ -132,36 +138,38 @@ async def delete_left_member_notification(update: Update, context: ContextTypes.
         except Exception as e:
             print("Error deleting left member notification:", e)
 
-# Проверка спама
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message or update.channel_post
     if msg and msg.text:
         text = msg.text
-        # Лемматизируем+нормализуем
+
+        # Сначала нормализуем (заменим лат. буквы, цифры на кириллические), потом лемматизируем
         processed_text = lemmatize_text(normalize_text(text))
         print("Processed message:", processed_text)
+
         permanent_ban = False
         user = msg.from_user
 
-        # Формируем полное имя
+        # Формируем "first_name | last_name"
         full_name = user.first_name if user.first_name else ""
         if user.last_name:
             full_name += " | " + user.last_name
 
+        # Сравниваем также нормализованную+лемматизированную версию имени
         normalized_name = lemmatize_text(normalize_text(full_name))
         banned_names = [lemmatize_text(normalize_text(n)) for n in BANNED_FULL_NAMES]
 
-        # 1. Проверка имени
+        # 1) Проверка по имени
         if normalized_name in banned_names:
             print(f"Banned full name: {full_name}")
             permanent_ban = True
 
-        # 2. Запрещённые символы
+        # 2) Проверка символов в имени
         if any(symbol in full_name for symbol in BANNED_SYMBOLS):
             print(f"Banned symbol in full name: {full_name}")
             permanent_ban = True
 
-        # 3. Запрещённые фразы
+        # 3) Проверка PERMANENT_BLOCK_PHRASES
         if not permanent_ban:
             for phrase in PERMANENT_BLOCK_PHRASES:
                 norm_phrase = lemmatize_text(normalize_text(phrase))
@@ -169,7 +177,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                     permanent_ban = True
                     break
 
-        # 4. Комбинации слов
+        # 4) Проверка COMBINED_BLOCKS
         if not permanent_ban:
             for combo in COMBINED_BLOCKS:
                 # Все слова combo должны быть в processed_text
@@ -177,7 +185,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                     permanent_ban = True
                     break
 
-        # 5. Доп. проверка SPAM_WORDS и SPAM_PHRASES
+        # 5) Доп. проверка SPAM_WORDS / SPAM_PHRASES, если нужны
         if not permanent_ban:
             for word in SPAM_WORDS:
                 w = lemmatize_text(normalize_text(word))
@@ -192,7 +200,6 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                         permanent_ban = True
                         break
 
-        # Блокировка
         if permanent_ban:
             chat_link = get_chat_link(msg.chat)
             block_time = get_tyumen_time()
@@ -222,22 +229,24 @@ async def init_app():
     if not TOKEN:
         raise ValueError("BOT_TOKEN not set")
     
-    # Создаем бота
     app_bot = ApplicationBuilder().token(TOKEN).build()
+
+    # Регистрируем обработчики
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_left_member_notification))
     app_bot.add_handler(MessageHandler(filters.ALL, delete_spam_message))
 
     await app_bot.initialize()
     
-    webhook_url = "https://your-app.onrender.com/webhook"  # Замените на реальный URL
+    # Укажите реальный домен вместо your-app.onrender.com
+    webhook_url = "https://your-app.onrender.com/webhook"
     await app_bot.bot.set_webhook(webhook_url)
     
     aio_app = web.Application()
     async def health(request):
         return web.Response(text="OK")
     aio_app.router.add_get("/", health)
-    
+
     async def handle_webhook(request):
         data = await request.json()
         update = Update.de_json(data, app_bot.bot)
