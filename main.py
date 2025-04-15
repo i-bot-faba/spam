@@ -87,11 +87,15 @@ def normalize_text(text: str) -> str:
     }
     return ''.join(mapping.get(ch, ch) for ch in text.lower())
 
-# Лемматизация (pymorphy2)
 def lemmatize_text(text: str) -> str:
     words = text.split()
     lemmatized_words = [morph.parse(word)[0].normal_form for word in words]
     return ' '.join(lemmatized_words)
+
+def check_banned_name(user_full_name: str, banned: str) -> bool:
+    norm_user = lemmatize_text(normalize_text(user_full_name))
+    norm_banned = lemmatize_text(normalize_text(banned))
+    return norm_user == norm_banned
 
 async def send_admin_notification(bot, text: str) -> None:
     try:
