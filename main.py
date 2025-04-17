@@ -137,7 +137,7 @@ async def init_app():
     app.add_handler(MessageHandler(filters.ALL, delete_spam_message))
 
     await app.initialize()
-    webhook_url = "https://<your-render-app>.onrender.com/webhook"
+    webhook_url = "https://spampython-bot-py.onrender.com"
     await app.bot.set_webhook(webhook_url)
 
     web_app = web.Application()
