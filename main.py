@@ -121,7 +121,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
                 await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
                 await send_admin_notification(context.bot,
-                    f"Забанен: @{user.username or user.first_name}
+                    f"Забанен: @{user.username or user.first_name}"
 Сообщение: {msg.text}")
             except Exception as e:
                 print("Ban/delete error:", e)
