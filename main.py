@@ -120,9 +120,10 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         user = msg.from_user
 
         full_name = user.first_name if user.first_name else ""
-        if user.last_name:
-            full_name += " | " + user.last_name
-            print(f"[DEBUG] full_name: {repr(full_name)}")
+if user.last_name:
+    full_name += " | " + user.last_name
+
+print(f"[DEBUG] Имя пользователя: {repr(full_name)}")  # <--- добавь сюда
             
         # ВАЖНО: проверяем символы до нормализации
         if any(symbol in full_name for symbol in BANNED_SYMBOLS):
