@@ -1,17 +1,12 @@
+
 import inspect
 from collections import namedtuple
 
+# Fix for deprecated getargspec (for pymorphy2 compatibility)
 ArgSpec = namedtuple("ArgSpec", "args varargs keywords defaults")
-
 def fix_getargspec(func):
     spec = inspect.getfullargspec(func)
-    return ArgSpec(
-        args=spec.args,
-        varargs=spec.varargs,
-        keywords=spec.varkw,
-        defaults=spec.defaults
-    )
-
+    return ArgSpec(args=spec.args, varargs=spec.varargs, keywords=spec.varkw, defaults=spec.defaults)
 inspect.getargspec = fix_getargspec
 
 import pymorphy2
@@ -36,7 +31,6 @@ def load_config():
         return json.load(f)
 
 config = load_config()
-
 BANNED_FULL_NAMES = config.get("BANNED_FULL_NAMES", [])
 PERMANENT_BLOCK_PHRASES = config.get("PERMANENT_BLOCK_PHRASES", [])
 COMBINED_BLOCKS = config.get("COMBINED_BLOCKS", [])
@@ -56,10 +50,7 @@ def get_chat_link(chat):
         return f"Chat ID: {chat.id}"
 
 def normalize_text(text: str) -> str:
-    mapping = {
-        'a': 'а', 'c': 'с', 'e': 'е', 'o': 'о', 'p': 'р',
-        'y': 'у', 'x': 'х', '3': 'з', '0': 'о'
-    }
+    mapping = {'a': 'а','c': 'с','e': 'е','o': 'о','p': 'р','y': 'у','x': 'х','3': 'з','0': 'о'}
     return ''.join(mapping.get(ch, ch) for ch in text.lower())
 
 def lemmatize_text(text: str) -> str:
@@ -79,110 +70,50 @@ SPAM_PHRASES = []
 async def restrict_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message
     if msg and msg.new_chat_members:
-        chat_link = get_chat_link(msg.chat)
         for member in msg.new_chat_members:
-            until_date = int(time.time()) + 300
             try:
                 await context.bot.restrict_chat_member(
                     chat_id=msg.chat.id,
                     user_id=member.id,
-                    permissions=ChatPermissions(
-                        can_send_messages=False,
-                        can_send_media_messages=False,
-                        can_send_other_messages=False,
-                        can_add_web_page_previews=False
-                    ),
-                    until_date=until_date
+                    permissions=ChatPermissions(can_send_messages=False),
+                    until_date=int(time.time()) + 300
                 )
-                print(f"New member {member.id} restricted for 300s in chat {msg.chat.id} ({chat_link}).")
+                await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
             except Exception as e:
-                print("Error restricting new member:", e)
-        try:
-            await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
-        except Exception as e:
-            print("Error deleting join notification message:", e)
-
-async def delete_left_member_notification(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    msg = update.message
-    if msg and msg.left_chat_member:
-        try:
-            await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
-        except Exception as e:
-            print("Error deleting left member notification:", e)
+                print("Restriction error:", e)
 
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.message or update.channel_post
     if msg and msg.text:
         text = msg.text
         processed_text = lemmatize_text(normalize_text(text))
-        print("Processed message:", processed_text)
-        permanent_ban = False
         user = msg.from_user
-
-        full_name = user.first_name if user.first_name else ""
-if user.last_name:
-    full_name += " | " + user.last_name
-
-print(f"[DEBUG] Имя пользователя: {repr(full_name)}")  # <--- добавь сюда
-            
-        # ВАЖНО: проверяем символы до нормализации
-        if any(symbol in full_name for symbol in BANNED_SYMBOLS):
-            print(f"Banned symbol in full name: {full_name}")
-            permanent_ban = True
+        full_name = user.first_name or ""
+        if user.last_name:
+            full_name += " | " + user.last_name
 
         normalized_name = lemmatize_text(normalize_text(full_name))
         banned_names = [lemmatize_text(normalize_text(n)) for n in BANNED_FULL_NAMES]
+        permanent_ban = False
 
         if normalized_name in banned_names:
-            print(f"Banned full name: {full_name}")
             permanent_ban = True
-
-        if not permanent_ban:
-            for phrase in PERMANENT_BLOCK_PHRASES:
-                norm_phrase = lemmatize_text(normalize_text(phrase))
-                if norm_phrase in processed_text:
-                    permanent_ban = True
-                    break
-
-        if not permanent_ban:
-            for combo in COMBINED_BLOCKS:
-                if all(lemmatize_text(normalize_text(w)) in processed_text for w in combo):
-                    permanent_ban = True
-                    break
-
-        if not permanent_ban:
-            for word in SPAM_WORDS:
-                w = lemmatize_text(normalize_text(word))
-                if re.search(r'\b' + re.escape(w) + r'\b', processed_text):
-                    permanent_ban = True
-                    break
-            if not permanent_ban:
-                for phrase in SPAM_PHRASES:
-                    ph = lemmatize_text(normalize_text(phrase))
-                    if ph in processed_text:
-                        permanent_ban = True
-                        break
+        if any(symbol in full_name for symbol in BANNED_SYMBOLS):
+            permanent_ban = True
+        for phrase in PERMANENT_BLOCK_PHRASES:
+            if lemmatize_text(normalize_text(phrase)) in processed_text:
+                permanent_ban = True
+        for combo in COMBINED_BLOCKS:
+            if all(lemmatize_text(normalize_text(w)) in processed_text for w in combo):
+                permanent_ban = True
 
         if permanent_ban:
-            chat_link = get_chat_link(msg.chat)
-            block_time = get_tyumen_time()
-            username = f"@{user.username}" if user.username else (user.first_name or str(user.id))
-            notif = (
-                f"Никнейм: {username}\n"
-                f"Дата блокировки: {block_time}\n"
-                f"Название канала: {chat_link}\n"
-                f"Сообщение: {msg.text}"
-            )
-            print(notif)
             try:
                 await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
-            except Exception as e:
-                print("Error deleting offending message:", e)
-            try:
                 await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
+                await send_admin_notification(context.bot, f"Забанен: @{user.username or user.first_name}\nСообщение: {msg.text}")
             except Exception as e:
-                print("Error banning user:", e)
-            await send_admin_notification(context.bot, notif)
+                print("Ban error:", e)
 
 async def init_app():
     port = int(os.environ.get("PORT", 8443))
@@ -192,23 +123,20 @@ async def init_app():
 
     app_bot = ApplicationBuilder().token(TOKEN).build()
     app_bot.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, restrict_new_member))
-    app_bot.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_left_member_notification))
     app_bot.add_handler(MessageHandler(filters.ALL, delete_spam_message))
-
     await app_bot.initialize()
     await app_bot.bot.set_webhook("https://your-app.onrender.com/webhook")
 
     aio_app = web.Application()
     aio_app.router.add_get("/", lambda request: web.Response(text="OK"))
-
-    async def handle_webhook(request):
-        data = await request.json()
-        update = Update.de_json(data, app_bot.bot)
-        await app_bot.process_update(update)
-        return web.Response(text="OK")
-
-    aio_app.router.add_post("/webhook", handle_webhook)
+    aio_app.router.add_post("/webhook", lambda request: handle_webhook(request, app_bot))
     return aio_app, port
+
+async def handle_webhook(request, app_bot):
+    data = await request.json()
+    update = Update.de_json(data, app_bot.bot)
+    await app_bot.process_update(update)
+    return web.Response(text="OK")
 
 async def main():
     aio_app, port = await init_app()
