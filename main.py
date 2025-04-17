@@ -1,7 +1,6 @@
 import inspect
 from collections import namedtuple
-
-# Создаём аналог устаревшего getargspec
+# === Fix для pymorphy2 ===
 ArgSpec = namedtuple("ArgSpec", "args varargs keywords defaults")
 def fix_getargspec(func):
     spec = inspect.getfullargspec(func)
@@ -16,6 +15,7 @@ import asyncio
 import re
 import json
 import nest_asyncio
+import time
 from datetime import datetime, timedelta
 from aiohttp import web
 from telegram import Update, ChatPermissions
@@ -23,37 +23,30 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTyp
 
 nest_asyncio.apply()
 
+# === Загрузка конфига ===
 def load_config():
-    config_path = os.path.join(os.path.dirname(__file__), "config.json")
-    with open(config_path, "r", encoding="utf-8") as f:
+    cfg_path = os.path.join(os.path.dirname(__file__), "config.json")
+    with open(cfg_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 config = load_config()
-BANNED_FULL_NAMES = config.get("BANNED_FULL_NAMES", [])
+BANNED_FULL_NAMES       = config.get("BANNED_FULL_NAMES", [])
 PERMANENT_BLOCK_PHRASES = config.get("PERMANENT_BLOCK_PHRASES", [])
-COMBINED_BLOCKS = config.get("COMBINED_BLOCKS", [])
-BANNED_SYMBOLS = config.get("BANNED_SYMBOLS", [])
-ADMIN_CHAT_ID = 296920330  # Твой ID
+COMBINED_BLOCKS         = config.get("COMBINED_BLOCKS", [])
+BANNED_SYMBOLS          = config.get("BANNED_SYMBOLS", [])
 
+ADMIN_CHAT_ID = 296920330
+
+# === Помощники ===
 def get_tyumen_time():
-    return (datetime.utcnow() + timedelta(hours=5)).strftime('%Y-%m-%d %H:%M:%S')
-
-def get_chat_link(chat):
-    if chat.username:
-        return f"https://t.me/{chat.username}"
-    elif chat.title:
-        return f"https://t.me/{chat.title.replace(' ', '')}"
-    else:
-        return f"Chat ID: {chat.id}"
+    return (datetime.utcnow() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
 
 def normalize_text(text: str) -> str:
-    mapping = {'a': 'а','c': 'с','e': 'е','o': 'о','p': 'р','y': 'у','x': 'х','3': 'з','0': 'о'}
-    return ''.join(mapping.get(ch, ch) for ch in text.lower())
+    mapping = {'a':'а','c':'с','e':'е','o':'о','p':'р','y':'у','x':'х','3':'з','0':'о'}
+    return "".join(mapping.get(ch, ch) for ch in text.lower())
 
 def lemmatize_text(text: str) -> str:
-    words = text.split()
-    lemmatized = [morph.parse(word)[0].normal_form for word in words]
-    return ' '.join(lemmatized)
+    return " ".join(morph.parse(w)[0].normal_form for w in text.split())
 
 async def send_admin_notification(bot, text: str):
     try:
@@ -61,88 +54,112 @@ async def send_admin_notification(bot, text: str):
     except Exception as e:
         print("Ошибка отправки админу:", e)
 
+# === Обработчик спама ===
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message or update.channel_post
     if not msg or not msg.text:
         return
 
     text = msg.text
-    processed_text = lemmatize_text(normalize_text(text))
+    proc_text = lemmatize_text(normalize_text(text))
     user = msg.from_user
+    # строим полное имя
     full_name = user.first_name or ""
     if user.last_name:
-        full_name += f" | {user.last_name}"
-    normalized_name = lemmatize_text(normalize_text(full_name))
+        full_name += " | " + user.last_name
 
-    print("Имя:", full_name)
-    print("Символы в имени:", list(full_name))
-    print("Текст сообщения:", processed_text)
+    # Логируем для отладки
+    print("▶️ Received from:", full_name)
+    print("   Unicode chars:", [hex(ord(ch)) for ch in full_name])
+    print("   BANNED_SYMBOLS:", BANNED_SYMBOLS)
+    print("   Proc text:", proc_text)
 
-    permanent_ban = False
+    # нормализованное имя
+    norm_name = lemmatize_text(normalize_text(full_name))
+    banned_norm_names = [lemmatize_text(normalize_text(n)) for n in BANNED_FULL_NAMES]
 
-    if normalized_name in [lemmatize_text(normalize_text(n)) for n in BANNED_FULL_NAMES]:
-        print("Совпадение по имени")
-        permanent_ban = True
+    ban = False
 
-    if any(symbol in full_name for symbol in BANNED_SYMBOLS):
-        print("Совпадение по символу в имени")
-        permanent_ban = True
+    # по точному имени
+    if norm_name in banned_norm_names:
+        print("   ❌ Name match")
+        ban = True
 
-    for phrase in PERMANENT_BLOCK_PHRASES:
-        if lemmatize_text(normalize_text(phrase)) in processed_text:
-            print("Совпадение по фразе")
-            permanent_ban = True
-            break
+    # по символам в имени
+    matched = [s for s in BANNED_SYMBOLS if s in full_name]
+    if matched:
+        print(f"   ❌ Symbol match: {matched}")
+        ban = True
 
-    for combo in COMBINED_BLOCKS:
-        if all(lemmatize_text(normalize_text(word)) in processed_text for word in combo):
-            print("Совпадение по комбинации")
-            permanent_ban = True
-            break
+    # по фразам
+    if not ban:
+        for phrase in PERMANENT_BLOCK_PHRASES:
+            if lemmatize_text(normalize_text(phrase)) in proc_text:
+                print(f"   ❌ Phrase match: {phrase}")
+                ban = True
+                break
 
-    if permanent_ban:
+    # по комбинациям
+    if not ban:
+        for combo in COMBINED_BLOCKS:
+            if all(lemmatize_text(normalize_text(w)) in proc_text for w in combo):
+                print(f"   ❌ Combo match: {combo}")
+                ban = True
+                break
+
+    if ban:
         try:
             await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
-            await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
-            print("Пользователь забанен:", full_name)
-            notif = (
-                f"Забанен: @{user.username or user.first_name}\n"
-                f"Имя: {full_name}\n"
-                f"Сообщение: {msg.text}"
-            )
-            await send_admin_notification(context.bot, notif)
         except Exception as e:
-            print("Ошибка при блокировке:", e)
+            print("Ошибка удаления:", e)
+        try:
+            await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
+            print("   ✅ User banned:", full_name)
+        except Exception as e:
+            print("Ошибка бана:", e)
 
+        notif = (
+            f"Забанен: @{user.username or user.first_name}\n"
+            f"Имя: {full_name}\n"
+            f"Дата: {get_tyumen_time()}\n"
+            f"Сообщение: {text}"
+        )
+        await send_admin_notification(context.bot, notif)
+
+# === Запуск ===
 async def init_app():
     port = int(os.environ.get("PORT", 8443))
     TOKEN = os.getenv("BOT_TOKEN")
     if not TOKEN:
-        raise ValueError("BOT_TOKEN не указан")
-    app_bot = ApplicationBuilder().token(TOKEN).build()
-    app_bot.add_handler(MessageHandler(filters.ALL, delete_spam_message))
-    await app_bot.initialize()
-    await app_bot.bot.set_webhook("https://your-app.onrender.com/webhook")  # Замени URL
-    aio_app = web.Application()
-    aio_app.router.add_get("/", lambda r: web.Response(text="OK"))
-    aio_app.router.add_post("/webhook", lambda r: handle_webhook(r, app_bot))
-    return aio_app, port
+        raise RuntimeError("BOT_TOKEN не задан")
 
-async def handle_webhook(request, app_bot):
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(MessageHandler(filters.ALL, delete_spam_message))
+
+    await app.initialize()
+    webhook_url = "https://<your-render-app>.onrender.com/webhook"
+    await app.bot.set_webhook(webhook_url)
+
+    web_app = web.Application()
+    web_app.router.add_get("/", lambda r: web.Response(text="OK"))
+    web_app.router.add_post("/webhook", lambda r: handle(r, app))
+    return web_app, port
+
+async def handle(request, app):
     data = await request.json()
-    update = Update.de_json(data, app_bot.bot)
-    await app_bot.process_update(update)
+    update = Update.de_json(data, app.bot)
+    await app.process_update(update)
     return web.Response(text="OK")
 
 async def main():
-    aio_app, port = await init_app()
-    runner = web.AppRunner(aio_app)
+    web_app, port = await init_app()
+    runner = web.AppRunner(web_app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    print(f"Server running on port {port}")
+    print(f"Server running on {port}")
     while True:
         await asyncio.sleep(3600)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
