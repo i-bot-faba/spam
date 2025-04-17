@@ -1,6 +1,10 @@
 import inspect
+import unicodedata
 from collections import namedtuple
 
+def normalize_unicode(text: str) -> str:
+    return unicodedata.normalize("NFKC", text)
+    
 # --- Fix pymorphy2 for Python 3.11+ ---
 ArgSpec = namedtuple("ArgSpec", "args varargs keywords defaults")
 
