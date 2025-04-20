@@ -73,37 +73,42 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     if user.last_name:
         full_name += " | " + user.last_name
 
-    # Убираем VS‑16
-    clean_name = re.sub(r'[\uFE00-\uFE0F]', '', full_name)
+    # Убираем вариационные селекторы и ZWJ
+    clean_name = re.sub(r'[\uFE00-\uFE0F\u200D]', '', full_name)
     name_lower = normalize_text(clean_name)
 
     print("▶️ From:", full_name, "| Clean:", clean_name)
 
     ban = False
+    # 0) Immediate ban on 💋
+    if "💋" in clean_name:
+        print("   ❌ Found 💋 in name, banning immediately")
+        ban = True
 
-    # 0) По подстрокам в имени
-    for substr in BANNED_NAME_SUBSTRINGS:
-        if normalize_text(substr) in name_lower:
-            print(f"   ❌ Substring match in name: {substr}")
-            ban = True
-            break
-
-    # 1) Точное имя
+    # 1) По подстрокам в имени
     if not ban:
-        norm_name       = lemmatize_text(name_lower)
-        banned_norms    = [lemmatize_text(normalize_text(n)) for n in BANNED_FULL_NAMES]
+        for substr in BANNED_NAME_SUBSTRINGS:
+            if normalize_text(substr) in name_lower:
+                print(f"   ❌ Substring match in name: {substr}")
+                ban = True
+                break
+
+    # 2) Точное имя
+    if not ban:
+        norm_name    = lemmatize_text(name_lower)
+        banned_norms = [lemmatize_text(normalize_text(n)) for n in BANNED_FULL_NAMES]
         if norm_name in banned_norms:
             print("   ❌ Full name match")
             ban = True
 
-    # 2) По символам
+    # 3) По символам
     if not ban:
         matched = [s for s in BANNED_SYMBOLS if s in clean_name]
         if matched:
             print(f"   ❌ Symbol match: {matched}")
             ban = True
 
-    # 3) По фразам
+    # 4) По фразам
     if not ban:
         for phrase in PERMANENT_BLOCK_PHRASES:
             if lemmatize_text(normalize_text(phrase)) in proc_text:
@@ -111,7 +116,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 ban = True
                 break
 
-    # 4) По комбинациям
+    # 5) По комбинациям
     if not ban:
         for combo in COMBINED_BLOCKS:
             if all(lemmatize_text(normalize_text(w)) in proc_text for w in combo):
@@ -145,7 +150,6 @@ async def init_app():
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN не задан")
 
-    # Webhook
     base = os.getenv("WEBHOOK_URL") or f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}"
     webhook_url = f"{base}/webhook"
     print("🔗 Webhook:", webhook_url)
