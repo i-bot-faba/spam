@@ -80,9 +80,15 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     print("▶️ From:", full_name, "| Clean:", clean_name)
 
     ban = False
-    # 0) Immediate ban on 💋
+
+    # 0) Immediate ban on символ 💋
     if "💋" in clean_name:
         print("   ❌ Found 💋 in name, banning immediately")
+        ban = True
+
+    # 0.1) Immediate ban on any Latin letters in name
+    if not ban and re.search(r'[A-Za-z]', clean_name):
+        print("   ❌ Found Latin letters in name, banning immediately")
         ban = True
 
     # 1) По подстрокам в имени
