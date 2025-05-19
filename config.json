@@ -52,5 +52,11 @@
     "финдир",
     "750 мл",
     "вб и озон"
+  ],
+  "BANNED_WORDS": [
+    "⁢⁢B⁢⁢L⁢⁢A⁢⁢C⁢⁢K⁢⁢P⁢⁢I⁢⁢N⁢⁢K⁢⁢",
+    "NFT",
+    "DOOD",
+    "@GroupAnonymousBot"
   ]
 }
