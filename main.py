@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timedelta
 from aiohttp import web
 from telegram import Update, ChatPermissions
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
 import pymorphy2
 
 # --- Fix для pymorphy2 на Python 3.11+ ---
@@ -24,11 +24,15 @@ morph = pymorphy2.MorphAnalyzer()
 
 nest_asyncio.apply()
 
-# --- Конфиг ---
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+
 def load_config():
-    path = os.path.join(os.path.dirname(__file__), "config.json")
-    with open(path, "r", encoding="utf-8") as f:
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
+
+def save_config(config):
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
 
 config = load_config()
 BANNED_FULL_NAMES         = config.get("BANNED_FULL_NAMES", [])
@@ -36,10 +40,10 @@ PERMANENT_BLOCK_PHRASES   = config.get("PERMANENT_BLOCK_PHRASES", [])
 COMBINED_BLOCKS           = config.get("COMBINED_BLOCKS", [])
 BANNED_SYMBOLS            = config.get("BANNED_SYMBOLS", [])
 BANNED_NAME_SUBSTRINGS    = config.get("BANNED_NAME_SUBSTRINGS", [])
+BANNED_WORDS              = config.get("BANNED_WORDS", [])
 
-ADMIN_CHAT_ID = 296920330  # ваш ID
+ADMIN_CHAT_ID = 296920330  # твой ID
 
-# --- Helpers ---
 def get_tyumen_time():
     return (datetime.utcnow() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -58,6 +62,29 @@ async def send_admin_notification(bot, text: str):
         await bot.send_message(chat_id=ADMIN_CHAT_ID, text=text)
     except Exception as e:
         print("Ошибка отправки админу:", e)
+
+async def add_spam_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Напиши слово или фразу для спама, например:\n/addspam NFT")
+        return
+    new_word = " ".join(context.args).strip()
+    config = load_config()
+    if "BANNED_WORDS" not in config:
+        config["BANNED_WORDS"] = []
+    if new_word in config["BANNED_WORDS"]:
+        await update.message.reply_text("Это слово уже есть в спам-списке.")
+        return
+    config["BANNED_WORDS"].append(new_word)
+    save_config(config)
+    await update.message.reply_text(f"Добавлено новое спам-слово:\n{new_word}")
+
+async def spam_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    config = load_config()
+    words = config.get("BANNED_WORDS", [])
+    if not words:
+        await update.message.reply_text("Список спам-слов пуст.")
+    else:
+        await update.message.reply_text("Текущий спам-список:\n" + "\n".join(words))
 
 # --- Обработчик ---
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -124,6 +151,16 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 ban = True
                 break
 
+    # 6) По отдельным словам из BANNED_WORDS
+    if not ban:
+        config = load_config()
+        banned_words = config.get("BANNED_WORDS", [])
+        for word in banned_words:
+            if word.lower() in text.lower():
+                print(f"   ❌ BANNED_WORD: {word}")
+                ban = True
+                break
+
     if ban:
         try:
             await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
@@ -155,6 +192,8 @@ async def init_app():
     print("🔗 Webhook:", webhook_url)
 
     app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("addspam", add_spam_command))
+    app.add_handler(CommandHandler("spamlist", spam_list_command))
     app.add_handler(MessageHandler(filters.ALL, delete_spam_message))
 
     await app.initialize()
