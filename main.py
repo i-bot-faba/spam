@@ -35,6 +35,7 @@ def load_config():
 def save_config(cfg):
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
+    print("Сохранил config в:", os.path.abspath(CONFIG_PATH))
 
 def get_tyumen_time():
     return (datetime.utcnow() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
