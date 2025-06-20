@@ -8,8 +8,8 @@ import nest_asyncio
 import time
 from datetime import datetime, timedelta
 from aiohttp import web
-from telegram import Update, ChatPermissions
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
+from telegram import Update, ChatPermissions, ReplyKeyboardMarkup
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes, ConversationHandler
 import pymorphy2
 
 # --- Fix для pymorphy2 на Python 3.11+ ---
@@ -19,9 +19,7 @@ def fix_getargspec(func):
     return ArgSpec(args=spec.args, varargs=spec.varargs, keywords=spec.varkw, defaults=spec.defaults)
 inspect.getargspec = fix_getargspec
 
-# Лемматизатор
 morph = pymorphy2.MorphAnalyzer()
-
 nest_asyncio.apply()
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
@@ -35,6 +33,7 @@ def save_config(config):
         json.dump(config, f, ensure_ascii=False, indent=2)
 
 config = load_config()
+
 BANNED_FULL_NAMES         = config.get("BANNED_FULL_NAMES", [])
 PERMANENT_BLOCK_PHRASES   = config.get("PERMANENT_BLOCK_PHRASES", [])
 COMBINED_BLOCKS           = config.get("COMBINED_BLOCKS", [])
@@ -42,16 +41,14 @@ BANNED_SYMBOLS            = config.get("BANNED_SYMBOLS", [])
 BANNED_NAME_SUBSTRINGS    = config.get("BANNED_NAME_SUBSTRINGS", [])
 BANNED_WORDS              = config.get("BANNED_WORDS", [])
 
-ADMIN_CHAT_ID = 296920330  # твой ID
+ADMIN_CHAT_ID = 296920330
 
+# === Helpers ===
 def get_tyumen_time():
     return (datetime.utcnow() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
 
 def normalize_text(text: str) -> str:
-    mapping = {
-        'a':'а','c':'с','e':'е','o':'о','p':'р','y':'у','x':'х',
-        '3':'з','0':'о'
-    }
+    mapping = {'a':'а','c':'с','e':'е','o':'о','p':'р','y':'у','x':'х','3':'з','0':'о'}
     return "".join(mapping.get(ch, ch) for ch in text.lower())
 
 def lemmatize_text(text: str) -> str:
@@ -63,30 +60,7 @@ async def send_admin_notification(bot, text: str):
     except Exception as e:
         print("Ошибка отправки админу:", e)
 
-async def add_spam_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Напиши слово или фразу для спама, например:\n/addspam NFT")
-        return
-    new_word = " ".join(context.args).strip()
-    config = load_config()
-    if "BANNED_WORDS" not in config:
-        config["BANNED_WORDS"] = []
-    if new_word in config["BANNED_WORDS"]:
-        await update.message.reply_text("Это слово уже есть в спам-списке.")
-        return
-    config["BANNED_WORDS"].append(new_word)
-    save_config(config)
-    await update.message.reply_text(f"Добавлено новое спам-слово:\n{new_word}")
-
-async def spam_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    config = load_config()
-    words = config.get("BANNED_WORDS", [])
-    if not words:
-        await update.message.reply_text("Список спам-слов пуст.")
-    else:
-        await update.message.reply_text("Текущий спам-список:\n" + "\n".join(words))
-
-# --- Обработчик ---
+# === Спам фильтр ===
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message or update.channel_post
     if not msg or not msg.text:
@@ -94,25 +68,23 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     text      = msg.text
     proc_text = lemmatize_text(normalize_text(text))
-
     user      = msg.from_user
     full_name = user.first_name or ""
     if user.last_name:
         full_name += " | " + user.last_name
-
-    # Убираем вариационные селекторы и ZWJ
     clean_name = re.sub(r'[\uFE00-\uFE0F\u200D]', '', full_name)
     name_lower = normalize_text(clean_name)
 
     print("▶️ From:", full_name, "| Clean:", clean_name)
 
     ban = False
-    # 0) Immediate ban on 💋
+
+    # 0) 💋 в имени — сразу бан
     if "💋" in clean_name:
         print("   ❌ Found 💋 in name, banning immediately")
         ban = True
 
-    # 1) По подстрокам в имени
+    # 1) Подстроки в имени
     if not ban:
         for substr in BANNED_NAME_SUBSTRINGS:
             if normalize_text(substr) in name_lower:
@@ -128,14 +100,22 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             print("   ❌ Full name match")
             ban = True
 
-    # 3) По символам
+    # 3) Символы
     if not ban:
         matched = [s for s in BANNED_SYMBOLS if s in clean_name]
         if matched:
             print(f"   ❌ Symbol match: {matched}")
             ban = True
 
-    # 4) По фразам
+    # 4) Спам-слова
+    if not ban:
+        for word in BANNED_WORDS:
+            if word.lower() in text.lower():
+                print(f"   ❌ BANNED_WORD matched: {word}")
+                ban = True
+                break
+
+    # 5) Фразы
     if not ban:
         for phrase in PERMANENT_BLOCK_PHRASES:
             if lemmatize_text(normalize_text(phrase)) in proc_text:
@@ -143,21 +123,11 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 ban = True
                 break
 
-    # 5) По комбинациям
+    # 6) Комбинации
     if not ban:
         for combo in COMBINED_BLOCKS:
             if all(lemmatize_text(normalize_text(w)) in proc_text for w in combo):
                 print(f"   ❌ Combo match: {combo}")
-                ban = True
-                break
-
-    # 6) По отдельным словам из BANNED_WORDS
-    if not ban:
-        config = load_config()
-        banned_words = config.get("BANNED_WORDS", [])
-        for word in banned_words:
-            if word.lower() in text.lower():
-                print(f"   ❌ BANNED_WORD: {word}")
                 ban = True
                 break
 
@@ -171,7 +141,6 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             print("   ✅ Banned user:", clean_name)
         except Exception as e:
             print("Ошибка бана:", e)
-
         notif = (
             f"Забанен: @{user.username or user.first_name}\n"
             f"Имя: {clean_name}\n"
@@ -179,6 +148,93 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Сообщение: {text}"
         )
         await send_admin_notification(context.bot, notif)
+
+# === Диалог для добавления спама ===
+(
+    WAIT_TYPE,
+    WAIT_VALUE,
+) = range(2)
+
+ADD_OPTIONS = [
+    "Слово (в сообщении)",
+    "Фразу (в сообщении)",
+    "Символ (в имени)",
+    "Имя (точное)",
+    "Подстроку в имени",
+    "Комбинацию слов (через запятую)"
+]
+
+async def addspam_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("Нет прав.")
+        return ConversationHandler.END
+    reply_markup = ReplyKeyboardMarkup(
+        [[x] for x in ADD_OPTIONS], one_time_keyboard=True, resize_keyboard=True
+    )
+    await update.message.reply_text(
+        "Что добавить в список блокировки?", reply_markup=reply_markup
+    )
+    return WAIT_TYPE
+
+async def addspam_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text not in ADD_OPTIONS:
+        await update.message.reply_text("Выбери из меню.")
+        return WAIT_TYPE
+    context.user_data["add_type"] = text
+    msg = {
+        "Слово (в сообщении)": "Введи слово для блокировки:",
+        "Фразу (в сообщении)": "Введи фразу для блокировки:",
+        "Символ (в имени)": "Введи символ (например, 💋):",
+        "Имя (точное)": "Введи точное имя для блокировки:",
+        "Подстроку в имени": "Введи подстроку для блокировки:",
+        "Комбинацию слов (через запятую)": "Введи слова через запятую:",
+    }
+    await update.message.reply_text(msg[text], reply_markup=ReplyKeyboardMarkup([["Отмена"]], one_time_keyboard=True, resize_keyboard=True))
+    return WAIT_VALUE
+
+async def addspam_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    val = update.message.text.strip()
+    if val.lower() == "отмена":
+        await update.message.reply_text("Отменено.")
+        return ConversationHandler.END
+
+    conf = load_config()
+    t = context.user_data.get("add_type")
+
+    if t == "Слово (в сообщении)":
+        if val not in conf["BANNED_WORDS"]:
+            conf["BANNED_WORDS"].append(val)
+    elif t == "Фразу (в сообщении)":
+        if val not in conf["PERMANENT_BLOCK_PHRASES"]:
+            conf["PERMANENT_BLOCK_PHRASES"].append(val)
+    elif t == "Символ (в имени)":
+        if val not in conf["BANNED_SYMBOLS"]:
+            conf["BANNED_SYMBOLS"].append(val)
+    elif t == "Имя (точное)":
+        if val not in conf["BANNED_FULL_NAMES"]:
+            conf["BANNED_FULL_NAMES"].append(val)
+    elif t == "Подстроку в имени":
+        if val not in conf["BANNED_NAME_SUBSTRINGS"]:
+            conf["BANNED_NAME_SUBSTRINGS"].append(val)
+    elif t == "Комбинацию слов (через запятую)":
+        words = [w.strip() for w in val.split(",") if w.strip()]
+        if words and words not in conf["COMBINED_BLOCKS"]:
+            conf["COMBINED_BLOCKS"].append(words)
+
+    save_config(conf)
+    await update.message.reply_text(f"Добавлено: {val}\n\nСохранено в config.json.", reply_markup=None)
+    return ConversationHandler.END
+
+addspam_conv = ConversationHandler(
+    entry_points=[CommandHandler("addspam", addspam_start)],
+    states={
+        WAIT_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, addspam_type)],
+        WAIT_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, addspam_value)],
+    },
+    fallbacks=[MessageHandler(filters.Regex("^(Отмена)$"), lambda u, c: ConversationHandler.END)],
+    allow_reentry=True
+)
 
 # --- Запуск ---
 async def init_app():
@@ -192,9 +248,8 @@ async def init_app():
     print("🔗 Webhook:", webhook_url)
 
     app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("addspam", add_spam_command))
-    app.add_handler(CommandHandler("spamlist", spam_list_command))
     app.add_handler(MessageHandler(filters.ALL, delete_spam_message))
+    app.add_handler(addspam_conv)
 
     await app.initialize()
     await app.bot.set_webhook(webhook_url)
