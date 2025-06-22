@@ -1,5 +1,3 @@
-import inspect
-from collections import namedtuple
 import os
 import asyncio
 import re
@@ -15,61 +13,48 @@ from telegram.ext import (
 import pymorphy2
 from pymongo import MongoClient
 
-# --- pymorphy2 fix ---
-ArgSpec = namedtuple("ArgSpec", "args varargs keywords defaults")
-def fix_getargspec(func):
-    spec = inspect.getfullargspec(func)
-    return ArgSpec(args=spec.args, varargs=spec.varargs, keywords=spec.varkw, defaults=spec.defaults)
-inspect.getargspec = fix_getargspec
-
-morph = pymorphy2.MorphAnalyzer()
 nest_asyncio.apply()
+morph = pymorphy2.MorphAnalyzer()
 
-ADMIN_CHAT_ID = 296920330  # твой id
+ADMIN_CHAT_ID = 296920330
+MONGODB_URI = os.getenv("MONGODB_URI")
+DB_NAME = "spambot"
+COLL_NAME = "spambot_config"
 
-# --- Работа с MongoDB ---
-def get_db():
-    uri = os.getenv("MONGODB_URI")
-    if not uri:
-        raise RuntimeError("MONGODB_URI не задан")
-    client = MongoClient(uri)
-    db = client["antispam"]
-    return db
+client = MongoClient(MONGODB_URI)
+db = client[DB_NAME]
+coll = db[COLL_NAME]
+
+CONFIG_ID = "main_config"  # основной документ
+
+def get_tyumen_time():
+    return (datetime.utcnow() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
+
+def normalize_text(text: str) -> str:
+    mapping = {'a':'а','c':'с','e':'е','o':'о','p':'р','y':'у','x':'х','3':'з','0':'о'}
+    return "".join(mapping.get(ch, ch) for ch in text.lower())
+
+def lemmatize_text(text: str) -> str:
+    return " ".join(morph.parse(w)[0].normal_form for w in text.split())
 
 def load_config():
-    db = get_db()
-    cfg = db.config.find_one({"_id": "main"})
+    cfg = coll.find_one({"_id": CONFIG_ID})
     if not cfg:
-        # если нет конфига — создаём дефолт
+        # Если конфиг пустой — создаём шаблон
         cfg = {
-            "_id": "main",
+            "_id": CONFIG_ID,
             "BANNED_FULL_NAMES": [],
             "PERMANENT_BLOCK_PHRASES": [],
             "COMBINED_BLOCKS": [],
             "BANNED_SYMBOLS": [],
             "BANNED_NAME_SUBSTRINGS": [],
-            "BANNED_WORDS": []
+            "BANNED_WORDS": [],
         }
-        db.config.insert_one(cfg)
+        coll.replace_one({"_id": CONFIG_ID}, cfg, upsert=True)
     return cfg
 
 def save_config(cfg):
-    db = get_db()
-    db.config.replace_one({"_id": "main"}, cfg, upsert=True)
-
-# --- Вспомогательные функции ---
-def get_tyumen_time():
-    return (datetime.utcnow() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
-
-def normalize_text(text: str) -> str:
-    mapping = {
-        'a':'а','c':'с','e':'е','o':'о','p':'р','y':'у','x':'х',
-        '3':'з','0':'о'
-    }
-    return "".join(mapping.get(ch, ch) for ch in text.lower())
-
-def lemmatize_text(text: str) -> str:
-    return " ".join(morph.parse(w)[0].normal_form for w in text.split())
+    coll.replace_one({"_id": CONFIG_ID}, cfg, upsert=True)
 
 async def send_admin_notification(bot, text: str):
     try:
@@ -77,7 +62,7 @@ async def send_admin_notification(bot, text: str):
     except Exception as e:
         print("Ошибка отправки админу:", e)
 
-# --- Обработчик спама ---
+# --- СПАМ ХЕНДЛЕР ---
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message or update.channel_post
     if not msg or not msg.text:
@@ -95,45 +80,38 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     name_lower = normalize_text(clean_name)
 
     ban = False
-    # 0) 💋 в имени — моментально
     if "💋" in clean_name:
         ban = True
 
-    # 1) подстрока в имени
     if not ban:
         for substr in cfg.get("BANNED_NAME_SUBSTRINGS", []):
             if normalize_text(substr) in name_lower:
                 ban = True
                 break
 
-    # 2) Точное имя
     if not ban:
-        norm_name    = lemmatize_text(name_lower)
+        norm_name = lemmatize_text(name_lower)
         banned_norms = [lemmatize_text(normalize_text(n)) for n in cfg.get("BANNED_FULL_NAMES",[])]
         if norm_name in banned_norms:
             ban = True
 
-    # 3) Символы
     if not ban:
         matched = [s for s in cfg.get("BANNED_SYMBOLS",[]) if s in clean_name]
         if matched:
             ban = True
 
-    # 4) По словам
     if not ban:
         for word in cfg.get("BANNED_WORDS",[]):
             if word.lower() in text.lower():
                 ban = True
                 break
 
-    # 5) Фразы
     if not ban:
         for phrase in cfg.get("PERMANENT_BLOCK_PHRASES",[]):
             if lemmatize_text(normalize_text(phrase)) in proc_text:
                 ban = True
                 break
 
-    # 6) Комбинации
     if not ban:
         for combo in cfg.get("COMBINED_BLOCKS",[]):
             if all(lemmatize_text(normalize_text(w)) in proc_text for w in combo):
@@ -155,7 +133,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         await send_admin_notification(context.bot, notif)
 
-# --- /spamlist ---
+# --- /SPAMLIST ---
 async def spamlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("Нет доступа.")
@@ -171,8 +149,10 @@ async def spamlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
-# --- /addspam ---
-(ADD_CHOICE, ADD_INPUT, ADD_COMBO) = range(3)
+# --- /ADDSPAM ---
+(
+    ADD_CHOICE, ADD_INPUT, ADD_COMBO
+) = range(3)
 
 async def addspam_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_CHAT_ID:
@@ -243,7 +223,6 @@ async def addspam_combo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Комбинация добавлена: {', '.join(words)}")
     return ConversationHandler.END
 
-# --- фолбэк ---
 async def cancel_addspam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Добавление спама отменено.")
     return ConversationHandler.END
@@ -259,7 +238,7 @@ addspam_conv = ConversationHandler(
     per_user=True
 )
 
-# --- Запуск ---
+# --- ЗАПУСК ---
 async def init_app():
     port  = int(os.environ.get("PORT", 8443))
     TOKEN = os.getenv("BOT_TOKEN")
