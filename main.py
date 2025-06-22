@@ -1,3 +1,5 @@
+import inspect
+from collections import namedtuple
 import os
 import asyncio
 import re
@@ -13,48 +15,53 @@ from telegram.ext import (
 import pymorphy2
 from pymongo import MongoClient
 
-nest_asyncio.apply()
+# --- Fix для pymorphy2 на Python 3.11+ ---
+ArgSpec = namedtuple("ArgSpec", "args varargs keywords defaults")
+def fix_getargspec(func):
+    spec = inspect.getfullargspec(func)
+    return ArgSpec(args=spec.args, varargs=spec.varargs, keywords=spec.varkw, defaults=spec.defaults)
+inspect.getargspec = fix_getargspec
+
 morph = pymorphy2.MorphAnalyzer()
+nest_asyncio.apply()
 
-ADMIN_CHAT_ID = 296920330
-MONGODB_URI = os.getenv("MONGODB_URI")
-DB_NAME = "spambot"
-COLL_NAME = "spambot_config"
+# --- MongoDB ---
+MONGO_URI = os.getenv("MONGODB_URI")
+client = MongoClient(MONGO_URI)
+db = client["antispam"]
+config_col = db["config"]
 
-client = MongoClient(MONGODB_URI)
-db = client[DB_NAME]
-coll = db[COLL_NAME]
+ADMIN_CHAT_ID = 296920330  # твой id
 
-CONFIG_ID = "main_config"  # основной документ
+def load_config():
+    doc = config_col.find_one({"_id": "main"})
+    if doc:
+        doc.pop("_id")
+        return doc
+    return {
+        "BANNED_FULL_NAMES": [],
+        "PERMANENT_BLOCK_PHRASES": [],
+        "COMBINED_BLOCKS": [],
+        "BANNED_SYMBOLS": [],
+        "BANNED_NAME_SUBSTRINGS": [],
+        "BANNED_WORDS": []
+    }
+
+def save_config(cfg):
+    config_col.replace_one({"_id": "main"}, {**cfg, "_id": "main"}, upsert=True)
 
 def get_tyumen_time():
     return (datetime.utcnow() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
 
 def normalize_text(text: str) -> str:
-    mapping = {'a':'а','c':'с','e':'е','o':'о','p':'р','y':'у','x':'х','3':'з','0':'о'}
+    mapping = {
+        'a':'а','c':'с','e':'е','o':'о','p':'р','y':'у','x':'х',
+        '3':'з','0':'о'
+    }
     return "".join(mapping.get(ch, ch) for ch in text.lower())
 
 def lemmatize_text(text: str) -> str:
     return " ".join(morph.parse(w)[0].normal_form for w in text.split())
-
-def load_config():
-    cfg = coll.find_one({"_id": CONFIG_ID})
-    if not cfg:
-        # Если конфиг пустой — создаём шаблон
-        cfg = {
-            "_id": CONFIG_ID,
-            "BANNED_FULL_NAMES": [],
-            "PERMANENT_BLOCK_PHRASES": [],
-            "COMBINED_BLOCKS": [],
-            "BANNED_SYMBOLS": [],
-            "BANNED_NAME_SUBSTRINGS": [],
-            "BANNED_WORDS": [],
-        }
-        coll.replace_one({"_id": CONFIG_ID}, cfg, upsert=True)
-    return cfg
-
-def save_config(cfg):
-    coll.replace_one({"_id": CONFIG_ID}, cfg, upsert=True)
 
 async def send_admin_notification(bot, text: str):
     try:
@@ -80,38 +87,45 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     name_lower = normalize_text(clean_name)
 
     ban = False
+    # 0) 💋 в имени — моментально
     if "💋" in clean_name:
         ban = True
 
+    # 1) подстрока в имени
     if not ban:
         for substr in cfg.get("BANNED_NAME_SUBSTRINGS", []):
             if normalize_text(substr) in name_lower:
                 ban = True
                 break
 
+    # 2) Точное имя
     if not ban:
-        norm_name = lemmatize_text(name_lower)
+        norm_name    = lemmatize_text(name_lower)
         banned_norms = [lemmatize_text(normalize_text(n)) for n in cfg.get("BANNED_FULL_NAMES",[])]
         if norm_name in banned_norms:
             ban = True
 
+    # 3) Символы
     if not ban:
         matched = [s for s in cfg.get("BANNED_SYMBOLS",[]) if s in clean_name]
         if matched:
             ban = True
 
+    # 4) По словам
     if not ban:
         for word in cfg.get("BANNED_WORDS",[]):
             if word.lower() in text.lower():
                 ban = True
                 break
 
+    # 5) Фразы
     if not ban:
         for phrase in cfg.get("PERMANENT_BLOCK_PHRASES",[]):
             if lemmatize_text(normalize_text(phrase)) in proc_text:
                 ban = True
                 break
 
+    # 6) Комбинации
     if not ban:
         for combo in cfg.get("COMBINED_BLOCKS",[]):
             if all(lemmatize_text(normalize_text(w)) in proc_text for w in combo):
@@ -223,6 +237,7 @@ async def addspam_combo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Комбинация добавлена: {', '.join(words)}")
     return ConversationHandler.END
 
+# --- ФОЛБЭК ДЛЯ ЛЮБОЙ КОМАНДЫ ---
 async def cancel_addspam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Добавление спама отменено.")
     return ConversationHandler.END
