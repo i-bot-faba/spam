@@ -3,7 +3,6 @@ from collections import namedtuple
 import os
 import asyncio
 import re
-import json
 import nest_asyncio
 from datetime import datetime, timedelta
 from aiohttp import web
@@ -14,8 +13,9 @@ from telegram.ext import (
     filters, ContextTypes, ConversationHandler
 )
 import pymorphy2
+from pymongo import MongoClient
 
-# --- Fix для pymorphy2 на Python 3.11+ ---
+# --- pymorphy2 fix ---
 ArgSpec = namedtuple("ArgSpec", "args varargs keywords defaults")
 def fix_getargspec(func):
     spec = inspect.getfullargspec(func)
@@ -25,18 +25,39 @@ inspect.getargspec = fix_getargspec
 morph = pymorphy2.MorphAnalyzer()
 nest_asyncio.apply()
 
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 ADMIN_CHAT_ID = 296920330  # твой id
 
+# --- Работа с MongoDB ---
+def get_db():
+    uri = os.getenv("MONGODB_URI")
+    if not uri:
+        raise RuntimeError("MONGODB_URI не задан")
+    client = MongoClient(uri)
+    db = client["antispam"]
+    return db
+
 def load_config():
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+    db = get_db()
+    cfg = db.config.find_one({"_id": "main"})
+    if not cfg:
+        # если нет конфига — создаём дефолт
+        cfg = {
+            "_id": "main",
+            "BANNED_FULL_NAMES": [],
+            "PERMANENT_BLOCK_PHRASES": [],
+            "COMBINED_BLOCKS": [],
+            "BANNED_SYMBOLS": [],
+            "BANNED_NAME_SUBSTRINGS": [],
+            "BANNED_WORDS": []
+        }
+        db.config.insert_one(cfg)
+    return cfg
 
 def save_config(cfg):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
-    print("Сохранил config в:", os.path.abspath(CONFIG_PATH))
+    db = get_db()
+    db.config.replace_one({"_id": "main"}, cfg, upsert=True)
 
+# --- Вспомогательные функции ---
 def get_tyumen_time():
     return (datetime.utcnow() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -56,7 +77,7 @@ async def send_admin_notification(bot, text: str):
     except Exception as e:
         print("Ошибка отправки админу:", e)
 
-# --- СПАМ ХЕНДЛЕР ---
+# --- Обработчик спама ---
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message or update.channel_post
     if not msg or not msg.text:
@@ -134,7 +155,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         await send_admin_notification(context.bot, notif)
 
-# --- /SPAMLIST ---
+# --- /spamlist ---
 async def spamlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("Нет доступа.")
@@ -150,10 +171,8 @@ async def spamlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
-# --- /ADDSPAM ---
-(
-    ADD_CHOICE, ADD_INPUT, ADD_COMBO
-) = range(3)
+# --- /addspam ---
+(ADD_CHOICE, ADD_INPUT, ADD_COMBO) = range(3)
 
 async def addspam_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_CHAT_ID:
@@ -224,7 +243,7 @@ async def addspam_combo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Комбинация добавлена: {', '.join(words)}")
     return ConversationHandler.END
 
-# --- ФОЛБЭК ДЛЯ ЛЮБОЙ КОМАНДЫ ---
+# --- фолбэк ---
 async def cancel_addspam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Добавление спама отменено.")
     return ConversationHandler.END
@@ -240,7 +259,7 @@ addspam_conv = ConversationHandler(
     per_user=True
 )
 
-# --- ЗАПУСК ---
+# --- Запуск ---
 async def init_app():
     port  = int(os.environ.get("PORT", 8443))
     TOKEN = os.getenv("BOT_TOKEN")
