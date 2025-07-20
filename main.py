@@ -196,22 +196,23 @@ return ADD_CHOICE
 async def addspam_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice = update.message.text.strip()
     if choice not in "1234567":
-    await update.message.reply_text("Введи число от 1 до 7.")
-    return ADD_CHOICE
-context.user_data["addspam_type"] = int(choice)
-if choice == "6":
-    await update.message.reply_text("Введи слова через запятую (пример: трейдинг, инвестиции, криптовалюты):")
-    return ADD_COMBO
-prompts = [
-    "Введи слово:",
-    "Введи фразу:",
-    "Введи символ:",
-    "Введи имя полностью:",
-    "Введи подстроку для поиска в имени:",
-    "","Введи подстроку для поиска в username:"
-]
-await update.message.reply_text(prompts[int(choice)-1])
-return ADD_INPUT
+        await update.message.reply_text("Введи число от 1 до 7.")
+        return ADD_CHOICE
+    context.user_data["addspam_type"] = int(choice)
+    if choice == "6":
+        await update.message.reply_text("Введи слова через запятую (пример: трейдинг, инвестиции, криптовалюты):")
+        return ADD_COMBO
+    prompts = [
+        "Введи слово:",
+        "Введи фразу:",
+        "Введи символ:",
+        "Введи имя полностью:",
+        "Введи подстроку для поиска в имени:",
+        "",  # для шестого пункта
+        "Введи подстроку для поиска в username:"
+    ]
+    await update.message.reply_text(prompts[int(choice)-1])
+    return ADD_INPUT
 
 async def addspam_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     value = update.message.text.strip()
