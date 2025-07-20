@@ -181,18 +181,18 @@ async def addspam_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Нет доступа.")
         return ConversationHandler.END
     await update.message.reply_text(
-    "Что добавить?\n"
-    "1️⃣ Слово\n"
-    "2️⃣ Фразу\n"
-    "3️⃣ Символ\n"
-    "4️⃣ Имя\n"
-    "5️⃣ Подстроку в имени\n"
-    "6️⃣ Комбинацию слов (через запятую)\n"
-    "7️⃣ Подстроку в username (никнейме)\n\n"
-    "Отправь номер (1-7):"
-)
-return ADD_CHOICE
-
+        "Что добавить?\n"
+        "1️⃣ Слово\n"
+        "2️⃣ Фразу\n"
+        "3️⃣ Символ\n"
+        "4️⃣ Имя\n"
+        "5️⃣ Подстроку в имени\n"
+        "6️⃣ Комбинацию слов (через запятую)\n"
+        "7️⃣ Подстроку в username (никнейме)\n\n"
+        "Отправь номер (1-7):"
+    )
+    return ADD_CHOICE  # <-- ДОЛЖНО БЫТЬ С ОТСТУПОМ
+    
 async def addspam_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice = update.message.text.strip()
     if choice not in "1234567":
