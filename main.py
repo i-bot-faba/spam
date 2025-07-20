@@ -219,25 +219,25 @@ async def addspam_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     spam_type = context.user_data["addspam_type"]
     cfg = load_config()
     if spam_type == 1:
-    cfg.setdefault("BANNED_WORDS", []).append(value)
-    await update.message.reply_text(f"Слово добавлено: {value}")
-elif spam_type == 2:
-    cfg.setdefault("PERMANENT_BLOCK_PHRASES", []).append(value)
-    await update.message.reply_text(f"Фраза добавлена: {value}")
-elif spam_type == 3:
-    cfg.setdefault("BANNED_SYMBOLS", []).append(value)
-    await update.message.reply_text(f"Символ добавлен: {value}")
-elif spam_type == 4:
-    cfg.setdefault("BANNED_FULL_NAMES", []).append(value)
-    await update.message.reply_text(f"Имя добавлено: {value}")
-elif spam_type == 5:
-    cfg.setdefault("BANNED_NAME_SUBSTRINGS", []).append(value)
-    await update.message.reply_text(f"Подстрока в имени добавлена: {value}")
-elif spam_type == 7:
-    cfg.setdefault("BANNED_USERNAME_SUBSTRINGS", []).append(value)
-    await update.message.reply_text(f"Подстрока в username добавлена: {value}")
-save_config(cfg)
-return ConversationHandler.END
+        cfg.setdefault("BANNED_WORDS", []).append(value)
+        await update.message.reply_text(f"Слово добавлено: {value}")
+    elif spam_type == 2:
+        cfg.setdefault("PERMANENT_BLOCK_PHRASES", []).append(value)
+        await update.message.reply_text(f"Фраза добавлена: {value}")
+    elif spam_type == 3:
+        cfg.setdefault("BANNED_SYMBOLS", []).append(value)
+        await update.message.reply_text(f"Символ добавлен: {value}")
+    elif spam_type == 4:
+        cfg.setdefault("BANNED_FULL_NAMES", []).append(value)
+        await update.message.reply_text(f"Имя добавлено: {value}")
+    elif spam_type == 5:
+        cfg.setdefault("BANNED_NAME_SUBSTRINGS", []).append(value)
+        await update.message.reply_text(f"Подстрока в имени добавлена: {value}")
+    elif spam_type == 7:
+        cfg.setdefault("BANNED_USERNAME_SUBSTRINGS", []).append(value)
+        await update.message.reply_text(f"Подстрока в username добавлена: {value}")
+    save_config(cfg)
+    return ConversationHandler.END
 
 async def addspam_combo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
