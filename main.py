@@ -181,57 +181,62 @@ async def addspam_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Нет доступа.")
         return ConversationHandler.END
     await update.message.reply_text(
-        "Что добавить?\n"
-        "1️⃣ Слово\n"
-        "2️⃣ Фразу\n"
-        "3️⃣ Символ\n"
-        "4️⃣ Имя\n"
-        "5️⃣ Подстроку в имени\n"
-        "6️⃣ Комбинацию слов (через запятую)\n\n"
-        "Отправь номер (1-6):"
-    )
-    return ADD_CHOICE
+    "Что добавить?\n"
+    "1️⃣ Слово\n"
+    "2️⃣ Фразу\n"
+    "3️⃣ Символ\n"
+    "4️⃣ Имя\n"
+    "5️⃣ Подстроку в имени\n"
+    "6️⃣ Комбинацию слов (через запятую)\n"
+    "7️⃣ Подстроку в username (никнейме)\n\n"
+    "Отправь номер (1-7):"
+)
+return ADD_CHOICE
 
 async def addspam_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice = update.message.text.strip()
-    if choice not in "123456":
-        await update.message.reply_text("Введи число от 1 до 6.")
-        return ADD_CHOICE
-    context.user_data["addspam_type"] = int(choice)
-    if choice == "6":
-        await update.message.reply_text("Введи слова через запятую (пример: трейдинг, инвестиции, криптовалюты):")
-        return ADD_COMBO
-    prompts = [
-        "Введи слово:",
-        "Введи фразу:",
-        "Введи символ:",
-        "Введи имя полностью:",
-        "Введи подстроку для поиска в имени:"
-    ]
-    await update.message.reply_text(prompts[int(choice)-1])
-    return ADD_INPUT
+    if choice not in "1234567":
+    await update.message.reply_text("Введи число от 1 до 7.")
+    return ADD_CHOICE
+context.user_data["addspam_type"] = int(choice)
+if choice == "6":
+    await update.message.reply_text("Введи слова через запятую (пример: трейдинг, инвестиции, криптовалюты):")
+    return ADD_COMBO
+prompts = [
+    "Введи слово:",
+    "Введи фразу:",
+    "Введи символ:",
+    "Введи имя полностью:",
+    "Введи подстроку для поиска в имени:",
+    "","Введи подстроку для поиска в username:"
+]
+await update.message.reply_text(prompts[int(choice)-1])
+return ADD_INPUT
 
 async def addspam_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     value = update.message.text.strip()
     spam_type = context.user_data["addspam_type"]
     cfg = load_config()
     if spam_type == 1:
-        cfg.setdefault("BANNED_WORDS", []).append(value)
-        await update.message.reply_text(f"Слово добавлено: {value}")
-    elif spam_type == 2:
-        cfg.setdefault("PERMANENT_BLOCK_PHRASES", []).append(value)
-        await update.message.reply_text(f"Фраза добавлена: {value}")
-    elif spam_type == 3:
-        cfg.setdefault("BANNED_SYMBOLS", []).append(value)
-        await update.message.reply_text(f"Символ добавлен: {value}")
-    elif spam_type == 4:
-        cfg.setdefault("BANNED_FULL_NAMES", []).append(value)
-        await update.message.reply_text(f"Имя добавлено: {value}")
-    elif spam_type == 5:
-        cfg.setdefault("BANNED_NAME_SUBSTRINGS", []).append(value)
-        await update.message.reply_text(f"Подстрока в имени добавлена: {value}")
-    save_config(cfg)
-    return ConversationHandler.END
+    cfg.setdefault("BANNED_WORDS", []).append(value)
+    await update.message.reply_text(f"Слово добавлено: {value}")
+elif spam_type == 2:
+    cfg.setdefault("PERMANENT_BLOCK_PHRASES", []).append(value)
+    await update.message.reply_text(f"Фраза добавлена: {value}")
+elif spam_type == 3:
+    cfg.setdefault("BANNED_SYMBOLS", []).append(value)
+    await update.message.reply_text(f"Символ добавлен: {value}")
+elif spam_type == 4:
+    cfg.setdefault("BANNED_FULL_NAMES", []).append(value)
+    await update.message.reply_text(f"Имя добавлено: {value}")
+elif spam_type == 5:
+    cfg.setdefault("BANNED_NAME_SUBSTRINGS", []).append(value)
+    await update.message.reply_text(f"Подстрока в имени добавлена: {value}")
+elif spam_type == 7:
+    cfg.setdefault("BANNED_USERNAME_SUBSTRINGS", []).append(value)
+    await update.message.reply_text(f"Подстрока в username добавлена: {value}")
+save_config(cfg)
+return ConversationHandler.END
 
 async def addspam_combo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
