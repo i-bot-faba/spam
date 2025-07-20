@@ -105,13 +105,13 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if norm_name in banned_norms:
             ban = True
 
-    # 2.1) Подстрока в username
-if not ban and user.username:
-    username_lower = normalize_text(user.username)
-    for substr in cfg.get("BANNED_USERNAME_SUBSTRINGS", []):
-        if normalize_text(substr) in username_lower:
-            ban = True
-            break
+    # 2.1) Подстрока в username (этот блок был неправильно расположен у тебя!)
+    if not ban and user.username:
+        username_lower = normalize_text(user.username)
+        for substr in cfg.get("BANNED_USERNAME_SUBSTRINGS", []):
+            if normalize_text(substr) in username_lower:
+                ban = True
+                break
 
     # 3) Символы
     if not ban:
