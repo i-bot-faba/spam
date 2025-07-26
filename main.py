@@ -1,20 +1,3 @@
-'''requirements.txt'''
-python-telegram-bot[webhooks]==20.3
-pymorphy2
-nest_asyncio
-aiohttp
-pymongo[srv]
-pillow
-motor
-imagehash
-tensorflow==2.19.0
-nsfw-detector==1.1.1
-
-'''main.py'''
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-# === Патч для совместимости nsfw-detector с новой версией tensorflow_hub ===
 import sys, types
 import tensorflow as tf
 # Хак: обеспечиваем наличие модуля tensorflow_hub.tf_v1.estimator
