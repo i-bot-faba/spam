@@ -1,40 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# --- Хак для совместимости nsfw-detector с новой версией tensorflow_hub ---
-import requests
-import sys, types
-import tensorflow as tf
-
-# создаём модуль tensorflow_hub.tf_v1.estimator
-sys.modules['tensorflow_hub.tf_v1'] = types.ModuleType('tensorflow_hub.tf_v1')
-sys.modules['tensorflow_hub.tf_v1'].estimator = tf.estimator
-
-import tensorflow_hub as hub
-hub.tf_v1 = tf.compat.v1
-
-import inspect
-from collections import namedtuple
 import os
 import asyncio
 import re
-import nest_asyncio
+import inspect
+from collections import namedtuple
 from datetime import datetime, timedelta
 from io import BytesIO
 
+import nest_asyncio
+import pymorphy2
+import requests
 from aiohttp import web
 from PIL import Image
 import numpy as np
 import imagehash
-from nsfw_detector import predict
-
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder, MessageHandler, CommandHandler,
     filters, ContextTypes, ConversationHandler
 )
-import pymorphy2
 from pymongo import MongoClient
 
 # --- Fix для pymorphy2 на Python 3.11+ ---
@@ -44,8 +31,8 @@ def fix_getargspec(func):
     return ArgSpec(args=spec.args, varargs=spec.varargs, keywords=spec.varkw, defaults=spec.defaults)
 inspect.getargspec = fix_getargspec
 
-morph = pymorphy2.MorphAnalyzer()
 nest_asyncio.apply()
+morph = pymorphy2.MorphAnalyzer()
 
 # --- MongoDB ---
 MONGO_URI = os.getenv("MONGODB_URI")
@@ -81,10 +68,7 @@ async def send_admin_notification(bot, text: str):
     except Exception as e:
         print("Ошибка отправки админу:", e)
 
-# === Глобальные переменные для модели ===
-nsfw_model = None
-
-# --- СПАМ ХЕНДЛЕР ---
+# --- СПАМ И ФИЛЬТРАЦИЯ ПО АВАТАРУ И ТЕКСТУ ---
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message or update.channel_post
     if not msg:
@@ -93,7 +77,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = msg.from_user
     cfg = load_config()
 
-        # 0) NSFW-фильтр аватара через DeepAI API
+    # 0) NSFW-фильтр аватара через DeepAI API
     try:
         photos = await context.bot.get_user_profile_photos(user.id, limit=1)
         if photos.total_count:
@@ -121,12 +105,15 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # 1) pHash-фильтр аватара
     try:
-        ph = imagehash.phash(img)
+        # img остался из предыдущего блока
+        ph = imagehash.phash(Image.open(BytesIO(bio.getvalue())))
         for bad in cfg.get("BAD_HASHES", []):
             if (ph - imagehash.hex_to_hash(bad)) <= cfg.get("DISTANCE_THRESHOLD", 5):
                 await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
-                await send_admin_notification(context.bot,
-                    f"Забанен по pHash-аватару: @{user.username or user.first_name}")
+                await send_admin_notification(
+                    context.bot,
+                    f"Забанен по pHash-аватару: @{user.username or user.first_name}"
+                )
                 return
     except Exception:
         pass
@@ -134,6 +121,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     # 2) Текстовый спам-фильтр (как было)
     if not msg.text:
         return
+
     text = msg.text
     proc_text = lemmatize_text(normalize_text(text))
     full_name = user.first_name or ""
@@ -177,21 +165,34 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         except: pass
         try: await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
         except: pass
-        await send_admin_notification(context.bot,
-            f"Забанен: @{user.username or user.first_name}\nИмя: {clean_name}\nДата: {get_tyumen_time()}\nСообщение: {text}")
+        await send_admin_notification(
+            context.bot,
+            f"Забанен: @{user.username or user.first_name}\n"
+            f"Имя: {clean_name}\n"
+            f"Дата: {get_tyumen_time()}\n"
+            f"Сообщение: {text}"
+        )
 
-async def spamlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != ADMIN_CHAT_ID:
-        return await update.message.reply_text("Нет доступа.")
-    cfg = load_config()
-    text = (
-        "<b>BANNED_WORDS</b>:\n" + "\n".join(cfg.get("BANNED_WORDS", [])) + "\n\n"
-        "<b>BANNED_FULL_NAMES</b>:\n" + "\n".join(cfg.get("BANNED_FULL_NAMES", [])) + "\n\n"
-        "<b>BANNED_SYMBOLS</b>:\n" + " ".join(cfg.get("BANNED_SYMBOLS", [])) + "\n\n"
-        "<b>BANNED_NAME_SUBSTRINGS</b>:\n" + "\n".join(cfg.get("BANNED_NAME_SUBSTRINGS", [])) + "\n\n"
-        "<b>PERMANENT_BLOCK_PHRASES</b>:\n" + "\n".join(cfg.get("PERMANENT_BLOCK_PHRASES", [])) + "\n\n"
-        "<b>COMBINED_BLOCKS</b>:\n" + "\n".join([', '.join(c) for c in cfg.get("COMBINED_BLOCKS", [])])
-    )
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+# --- /SPAMLIST и /ADDSPAM хендлеры без изменений ---
+# …твой остальной код запуска…
 
-# … остальной запуск без изменений …
+async def init_app():
+    TOKEN = os.getenv("BOT_TOKEN")
+    if not TOKEN:
+        raise RuntimeError("BOT_TOKEN не задан")
+    webhook = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("spamlist", spamlist))
+    app.add_handler(MessageHandler(filters.ALL, delete_spam_message))
+
+    await app.initialize()
+    await app.bot.set_webhook(webhook)
+
+    web_app = web.Application()
+    web_app.router.add_get("/", lambda r: web.Response(text="OK"))
+    web_app.router.add_post("/webhook", lambda r: web.Response(text="OK") if await app.process_update(Update.de_json(await r.json(), app.bot)) is None else None)
+    return web_app, int(os.getenv("PORT", 8443))
+
+if __name__ == "__main__":
+    asyncio.run(init_app())
