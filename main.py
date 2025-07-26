@@ -161,6 +161,21 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Забанен: @{user.username or user.first_name}\nИмя: {clean_name}\nДата: {get_tyumen_time()}\nСообщение: {text}"
         )
 
+# --- Отправка списка спам-фильтров админам ---
+async def spamlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id != ADMIN_CHAT_ID:
+        return await update.message.reply_text("Нет доступа.")
+    cfg = load_config()
+    text = (
+        "<b>BANNED_WORDS</b>:\n" + "\n".join(cfg.get("BANNED_WORDS", [])) + "\n\n"
+        "<b>BANNED_FULL_NAMES</b>:\n" + "\n".join(cfg.get("BANNED_FULL_NAMES", [])) + "\n\n"
+        "<b>BANNED_SYMBOLS</b>:\n" + " ".join(cfg.get("BANNED_SYMBOLS", [])) + "\n\n"
+        "<b>BANNED_NAME_SUBSTRINGS</b>:\n" + "\n".join(cfg.get("BANNED_NAME_SUBSTRINGS", [])) + "\n\n"
+        "<b>PERMANENT_BLOCK_PHRASES</b>:\n" + "\n".join(cfg.get("PERMANENT_BLOCK_PHRASES", [])) + "\n\n"
+        "<b>COMBINED_BLOCKS</b>:\n" + "\n".join([', '.join(c) for c in cfg.get("COMBINED_BLOCKS", [])])
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
 # --- Команды драйвера и запуск ---
 async def init_app():
     TOKEN = os.getenv("BOT_TOKEN")
