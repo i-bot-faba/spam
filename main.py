@@ -1,14 +1,6 @@
-# === Патч для совместимости nsfw-detector с новой версией tensorflow_hub ===
-import sys, types
-import tensorflow as tf
-# Хак: обеспечиваем наличие модуля tensorflow_hub.tf_v1.estimator
-sys.modules['tensorflow_hub.tf_v1'] = types.ModuleType('tensorflow_hub.tf_v1')
-sys.modules['tensorflow_hub.tf_v1'].estimator = tf.estimator
-import tensorflow_hub as hub
-hub.tf_v1 = tf.compat.v1
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-import inspect
-from collections import namedtuple
 import os
 import asyncio
 import re
@@ -17,11 +9,10 @@ from io import BytesIO
 
 import nest_asyncio
 import pymorphy2
-from nsfw_detector import predict
-import imagehash
+import requests
 from aiohttp import web
 from PIL import Image
-import numpy as np
+import imagehash
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -31,6 +22,8 @@ from telegram.ext import (
 from pymongo import MongoClient
 
 # --- Fix для pymorphy2 на Python 3.11+ ---
+import inspect
+from collections import namedtuple
 ArgSpec = namedtuple("ArgSpec", "args varargs keywords defaults")
 def fix_getargspec(func):
     spec = inspect.getfullargspec(func)
@@ -48,7 +41,7 @@ config_col = db["config"]
 
 ADMIN_CHAT_ID = 296920330  # твой id
 
-# --- Загрузка конфигурации ---
+# --- Конфиг ---
 def load_config():
     doc = config_col.find_one({"_id": "main"})
     if not doc:
@@ -65,7 +58,7 @@ async def send_admin_notification(bot, text: str):
     except Exception as e:
         print("Ошибка отправки админу:", e)
 
-# --- СПАМ И ФИЛЬТРАЦИЯ ПО АВАТАРУ И ТЕКСТУ ---
+# --- Фильтрация сообщений и аватаров ---
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message or update.channel_post
     if not msg:
@@ -74,7 +67,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = msg.from_user
     cfg = load_config()
 
-    # 0) NSFW-фильтр аватара через nsfw_detector
+    # 0) NSFW-фильтр аватара через DeepAI API
     try:
         photos = await context.bot.get_user_profile_photos(user.id, limit=1)
         if photos.total_count:
@@ -83,14 +76,18 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             await f.download_to_memory(out=bio)
             bio.seek(0)
 
-            img = Image.open(bio).convert("RGB").resize((256,256))
-            arr = np.expand_dims(np.array(img)/255.0, 0)
-            preds = predict.classify_nd(predict.load_model(cfg.get("NSFW_MODEL_PATH", "nsfw_model.h5")), arr)[0]
-            if preds.get("porn", 0) >= cfg.get("NSFW_THRESHOLD", 0.6):
+            resp = requests.post(
+                "https://api.deepai.org/api/nsfw-detector",
+                files={'image': bio.getvalue()},
+                headers={'api-key': os.getenv("DEEPAI_API_KEY")}
+            )
+            data = resp.json()
+            nsfw_score = data.get("output", {}).get("nsfw_score", 0)
+            if nsfw_score >= cfg.get("NSFW_THRESHOLD", 0.6):
                 await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
                 await send_admin_notification(
                     context.bot,
-                    f"Забанен по NSFW-аватару (score={preds.get('porn'):.2f}): @{user.username or user.first_name}"
+                    f"Забанен по NSFW-аватару (score={nsfw_score:.2f}) @{user.username or user.first_name}"
                 )
                 return
     except Exception:
@@ -98,13 +95,13 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # 1) pHash-фильтр аватара
     try:
-        ph = imagehash.phash(img)
+        ph = imagehash.phash(Image.open(BytesIO(bio.getvalue())))
         for bad in cfg.get("BAD_HASHES", []):
             if (ph - imagehash.hex_to_hash(bad)) <= cfg.get("DISTANCE_THRESHOLD", 5):
                 await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
                 await send_admin_notification(
                     context.bot,
-                    f"Забанен по pHash-аватару: @{user.username or user.first_name}"
+                    f"Забанен по pHash-аватару @{user.username or user.first_name}"
                 )
                 return
     except Exception:
@@ -120,30 +117,24 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     name_lower = clean_name.lower()
 
     ban = False
-    # 💋 в имени
     if "💋" in clean_name:
         ban = True
-    # подстрока в имени
     for substr in cfg.get("BANNED_NAME_SUBSTRINGS", []):
         if substr.lower() in name_lower:
             ban = True
             break
-    # точное имя
     if not ban:
         norm = " ".join(morph.parse(w)[0].normal_form for w in name_lower.split())
         banned_norms = [morph.parse(n.lower())[0].normal_form for n in cfg.get("BANNED_FULL_NAMES", [])]
         if norm in banned_norms:
             ban = True
-    # подстрока в username
     if not ban and user.username:
         for substr in cfg.get("BANNED_USERNAME_SUBSTRINGS", []):
             if substr.lower() in user.username.lower():
                 ban = True
                 break
-    # символы
     if not ban and any(s in clean_name for s in cfg.get("BANNED_SYMBOLS", [])):
         ban = True
-    # слова и фразы
     if not ban:
         for w in cfg.get("BANNED_WORDS", []):
             if w.lower() in text.lower():
@@ -154,7 +145,6 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             if phrase.lower() in proc_text:
                 ban = True
                 break
-    # комбинации
     if not ban:
         for combo in cfg.get("COMBINED_BLOCKS", []):
             if all(w.lower() in proc_text for w in combo):
@@ -168,13 +158,10 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         except: pass
         await send_admin_notification(
             context.bot,
-            f"Забанен: @{user.username or user.first_name}\n"
-            f"Имя: {clean_name}\n"
-            f"Дата: {get_tyumen_time()}\n"
-            f"Сообщение: {text}"
+            f"Забанен: @{user.username or user.first_name}\nИмя: {clean_name}\nДата: {get_tyumen_time()}\nСообщение: {text}"
         )
 
-# --- Хендлеры запуска и webhook ---
+# --- Команды драйвера и запуск ---
 async def init_app():
     TOKEN = os.getenv("BOT_TOKEN")
     if not TOKEN:
