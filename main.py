@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -195,4 +194,4 @@ async def init_app():
     cfg = load_config()
     # загружаем модель NSFW
     model_path = cfg.get("NSFW_MODEL_PATH", "nsfw_model.h5")
-    nsfw_model = predict.load_model(model
+    nsfw_model = predict.load_model(model_path)
