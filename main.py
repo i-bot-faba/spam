@@ -28,23 +28,24 @@ from collections import namedtuple
 import os
 import asyncio
 import re
-import nest_asyncio
+import inspect
+from collections import namedtuple
 from datetime import datetime, timedelta
 from io import BytesIO
 
+import nest_asyncio
+import pymorphy2
+import requests
 from aiohttp import web
 from PIL import Image
 import numpy as np
 import imagehash
-from nsfw_detector import predict
-
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder, MessageHandler, CommandHandler,
-    filters, ContextTypes, ConversationHandler, ChatMemberHandler
+    filters, ContextTypes, ConversationHandler
 )
-import pymorphy2
 from pymongo import MongoClient
 
 # --- Fix для pymorphy2 на Python 3.11+ ---
@@ -54,8 +55,8 @@ def fix_getargspec(func):
     return ArgSpec(args=spec.args, varargs=spec.varargs, keywords=spec.varkw, defaults=spec.defaults)
 inspect.getargspec = fix_getargspec
 
-morph = pymorphy2.MorphAnalyzer()
 nest_asyncio.apply()
+morph = pymorphy2.MorphAnalyzer()
 
 # --- MongoDB ---
 MONGO_URI = os.getenv("MONGODB_URI")
@@ -65,40 +66,9 @@ config_col = db["config"]
 
 ADMIN_CHAT_ID = 296920330  # твой id
 
-def load_config():
-    doc = config_col.find_one({"_id": "main"})
-    if not doc:
-        return {}
-    doc.pop("_id", None)
-    return doc
+# --- ОСТАЛЬНОЕ ---
 
-def save_config(cfg):
-    config_col.replace_one({"_id": "main"}, {**cfg, "_id": "main"}, upsert=True)
-
-def get_tyumen_time():
-    return (datetime.utcnow() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
-
-def normalize_text(text: str) -> str:
-    mapping = {'a':'а','c':'с','e':'е','o':'о','p':'р','y':'у','x':'х','3':'з','0':'о'}
-    return "".join(mapping.get(ch, ch) for ch in text.lower())
-
-def lemmatize_text(text: str) -> str:
-    return " ".join(morph.parse(w)[0].normal_form for w in text.split())
-
-async def send_admin_notification(bot, text: str):
-    try:
-        await bot.send_message(chat_id=ADMIN_CHAT_ID, text=text)
-    except Exception as e:
-        print("Ошибка отправки админу:", e)
-
-# === Глобальные переменные для модели ===
-nsfw_model = None
-NSFW_THRESHOLD = 0.6
-BAD_HASHES = set()
-DISTANCE_THRESHOLD = 5
-
-# --- СПАМ ХЕНДЛЕР ---
-async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message or update.channel_post
     if not msg:
         return
