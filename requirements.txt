@@ -6,5 +6,6 @@ pymongo[srv]
 pillow
 motor
 imagehash
-tensorflow==2.19.0
+tensorflow==2.5.0
+tensorflow-hub==0.7.0
 nsfw-detector==1.1.1
