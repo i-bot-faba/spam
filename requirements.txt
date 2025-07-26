@@ -3,3 +3,7 @@ pymorphy2
 nest_asyncio
 aiohttp
 pymongo[srv]
+pillow
+nsfw-detector
+motor
+imagehash
