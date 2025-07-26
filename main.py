@@ -12,6 +12,7 @@ sys.modules['tensorflow_hub.tf_v1'].estimator = tf.estimator
 import tensorflow_hub as hub
 hub.tf_v1 = tf.compat.v1
 
+import requests
 import inspect
 from collections import namedtuple
 import os
@@ -99,15 +100,22 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             f = await context.bot.get_file(photos.photos[0][-1].file_id)
             bio = BytesIO()
             await f.download_to_memory(out=bio)
-            bio.seek(0)
-            img = Image.open(bio).convert("RGB").resize((256,256))
-            arr = np.expand_dims(np.array(img)/255.0, 0)
-            preds = predict.classify_nd(nsfw_model, arr)[0]
-            if preds.get("porn", 0) >= cfg.get("NSFW_THRESHOLD", 0.6):
-                await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
-                await send_admin_notification(context.bot,
-                    f"Забанен по NSFW-аватару: @{user.username or user.first_name}")
-                return
+           bio.seek(0)
+            resp = requests.post(
+            "https://api.deepai.org/api/nsfw-detector",
+            files={'image': bio.getvalue()},
+            headers={'api-key': os.getenv("DEEPAI_API_KEY")}
+    )
+    data = resp.json()
+# nsfw_score ~ вероятность “небезобидности” (от 0 до 1)
+    nsfw_score = data.get("output", {}).get("nsfw_score", 0)
+if nsfw_score >= cfg.get("NSFW_THRESHOLD", 0.6):
+    await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
+    await send_admin_notification(
+        context.bot,
+        f"Забанен по NSFW-аватару (score={nsfw_score:.2f}): @{user.username or user.first_name}"
+    )
+    return
     except Exception:
         pass
 
