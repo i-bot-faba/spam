@@ -8,3 +8,4 @@ motor
 imagehash
 tensorflow==2.19.0
 nsfw-detector==1.1.1
+requests
