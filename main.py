@@ -1,11 +1,12 @@
+import tensorflow as tf
+import tensorflow_hub as hub
+hub.tf_v1 = tf.compat.v1
 import inspect
 from collections import namedtuple
 import os
 import asyncio
 import re
 import nest_asyncio
-import tensorflow as tf
-import tensorflow_hub as hub
 from datetime import datetime, timedelta
 from io import BytesIO
 
