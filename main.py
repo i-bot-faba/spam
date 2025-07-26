@@ -1,3 +1,16 @@
+'''requirements.txt'''
+python-telegram-bot[webhooks]==20.3
+pymorphy2
+nest_asyncio
+aiohttp
+pymongo[srv]
+pillow
+motor
+imagehash
+tensorflow==2.19.0
+nsfw-detector==1.1.1
+
+'''main.py'''
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -53,9 +66,10 @@ config_col = db["config"]
 
 ADMIN_CHAT_ID = 296920330  # твой id
 
+
 # --- ОСТАЛЬНОЕ ---
 
-async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message or update.channel_post
     if not msg:
         return
