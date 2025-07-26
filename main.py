@@ -4,6 +4,8 @@ import os
 import asyncio
 import re
 import nest_asyncio
+import tensorflow as tf
+import tensorflow_hub as hub
 from datetime import datetime, timedelta
 from io import BytesIO
 
