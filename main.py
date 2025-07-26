@@ -1,11 +1,10 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 # === Патч для совместимости nsfw-detector с новой версией tensorflow_hub ===
+import sys, types
 import tensorflow as tf
-import importlib
-# Патч для совместимости nsfw-detector с новой версией tensorflow_hub
-hub = importlib.import_module('tensorflow_hub')
+# Хак: обеспечиваем наличие модуля tensorflow_hub.tf_v1.estimator
+sys.modules['tensorflow_hub.tf_v1'] = types.ModuleType('tensorflow_hub.tf_v1')
+sys.modules['tensorflow_hub.tf_v1'].estimator = tf.compat.v1.estimator
+import tensorflow_hub as hub
 hub.tf_v1 = tf.compat.v1
 
 import inspect
