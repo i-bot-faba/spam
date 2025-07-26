@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 # --- Хак для совместимости nsfw-detector с новой версией tensorflow_hub ---
+import requests
 import sys, types
 import tensorflow as tf
 
@@ -12,7 +13,6 @@ sys.modules['tensorflow_hub.tf_v1'].estimator = tf.estimator
 import tensorflow_hub as hub
 hub.tf_v1 = tf.compat.v1
 
-import requests
 import inspect
 from collections import namedtuple
 import os
