@@ -93,8 +93,8 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = msg.from_user
     cfg = load_config()
 
-    # 0) NSFW-фильтр аватара
-     try:
+        # 0) NSFW-фильтр аватара через DeepAI API
+    try:
         photos = await context.bot.get_user_profile_photos(user.id, limit=1)
         if photos.total_count:
             f = await context.bot.get_file(photos.photos[0][-1].file_id)
