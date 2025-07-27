@@ -80,19 +80,17 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     user = msg.from_user
-
     cfg = load_config()
-    text      = msg.text
+    text = msg.text
     proc_text = lemmatize_text(normalize_text(text))
 
-    user      = msg.from_user
     full_name = user.first_name or ""
     if user.last_name:
         full_name += " | " + user.last_name
     clean_name = re.sub(r'[\uFE00-\uFE0F\u200D]', '', full_name)
     name_lower = normalize_text(clean_name)
 
-        # 0) NSFW-фильтрация аватара через DeepAI API
+    # 0) NSFW-фильтрация аватара через DeepAI API
     try:
         photos = await context.bot.get_user_profile_photos(user.id, limit=1)
         if photos.total_count:
@@ -107,7 +105,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 headers={"api-key": os.getenv("DEEPAI_API_KEY")}
             )
             score = resp.json().get("output", {}).get("nsfw_score", 0)
-            if score >= load_config().get("NSFW_THRESHOLD", 0.6):
+            if score >= cfg.get("NSFW_THRESHOLD", 0.6):
                 await context.bot.ban_chat_member(msg.chat.id, user.id)
                 await send_admin_notification(
                     context.bot,
@@ -121,7 +119,6 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         img = Image.open(BytesIO(bio.getvalue()))
         ph = imagehash.phash(img)
-        cfg = load_config()
         for bad in cfg.get("BAD_HASHES", []):
             if (ph - imagehash.hex_to_hash(bad)) <= cfg.get("DISTANCE_THRESHOLD", 5):
                 await context.bot.ban_chat_member(msg.chat.id, user.id)
