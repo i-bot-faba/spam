@@ -14,6 +14,10 @@ from telegram.ext import (
 )
 import pymorphy2
 from pymongo import MongoClient
+import requests
+from io import BytesIO
+from PIL import Image
+import imagehash
 
 # --- Fix для pymorphy2 на Python 3.11+ ---
 ArgSpec = namedtuple("ArgSpec", "args varargs keywords defaults")
@@ -75,6 +79,8 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not msg or not msg.text:
         return
 
+    user = msg.from_user
+
     cfg = load_config()
     text      = msg.text
     proc_text = lemmatize_text(normalize_text(text))
@@ -86,6 +92,50 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     clean_name = re.sub(r'[\uFE00-\uFE0F\u200D]', '', full_name)
     name_lower = normalize_text(clean_name)
 
+        # 0) NSFW-фильтрация аватара через DeepAI API
+    try:
+        photos = await context.bot.get_user_profile_photos(user.id, limit=1)
+        if photos.total_count:
+            f = await context.bot.get_file(photos.photos[0][-1].file_id)
+            bio = BytesIO()
+            await f.download_to_memory(out=bio)
+            bio.seek(0)
+
+            resp = requests.post(
+                "https://api.deepai.org/api/nsfw-detector",
+                files={"image": bio.getvalue()},
+                headers={"api-key": os.getenv("DEEPAI_API_KEY")}
+            )
+            score = resp.json().get("output", {}).get("nsfw_score", 0)
+            if score >= load_config().get("NSFW_THRESHOLD", 0.6):
+                await context.bot.ban_chat_member(msg.chat.id, user.id)
+                await send_admin_notification(
+                    context.bot,
+                    f"Забанен по NSFW-аватару (score={score:.2f}): @{user.username or user.first_name}"
+                )
+                return
+    except Exception:
+        pass
+
+    # 1) pHash-фильтрация аватара
+    try:
+        img = Image.open(BytesIO(bio.getvalue()))
+        ph = imagehash.phash(img)
+        cfg = load_config()
+        for bad in cfg.get("BAD_HASHES", []):
+            if (ph - imagehash.hex_to_hash(bad)) <= cfg.get("DISTANCE_THRESHOLD", 5):
+                await context.bot.ban_chat_member(msg.chat.id, user.id)
+                await send_admin_notification(
+                    context.bot,
+                    f"Забанен по pHash-аватару: @{user.username or user.first_name}"
+                )
+                return
+    except Exception:
+        pass
+        
+        cfg = load_config()
+        text = msg.text
+    
     ban = False
     # 0) 💋 в имени — моментально
     if "💋" in clean_name:
