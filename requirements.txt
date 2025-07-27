@@ -2,7 +2,8 @@ python-telegram-bot[webhooks]==20.3
 pymorphy2
 nest_asyncio
 aiohttp
-pymongo[srv]
+pymongo
+dnspython
 pillow
 motor
 imagehash
