@@ -90,7 +90,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     clean_name = re.sub(r'[\uFE00-\uFE0F\u200D]', '', full_name)
     name_lower = normalize_text(clean_name)
 
-    # 0) NSFW-фильтрация аватара через DeepAI API
+    # --- NSFW и pHash фильтрация аватарки ---
     try:
         photos = await context.bot.get_user_profile_photos(user.id, limit=1)
         if photos.total_count:
@@ -98,13 +98,17 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             bio = BytesIO()
             await f.download_to_memory(out=bio)
             bio.seek(0)
-
+            img = Image.open(bio).convert("RGB")
+            
+            # NSFW DeepAI
             resp = requests.post(
                 "https://api.deepai.org/api/nsfw-detector",
                 files={"image": bio.getvalue()},
                 headers={"api-key": os.getenv("DEEPAI_API_KEY")}
             )
             score = resp.json().get("output", {}).get("nsfw_score", 0)
+            print(f"NSFW check: user={user.id}, score={score}")
+
             if score >= cfg.get("NSFW_THRESHOLD", 0.6):
                 await context.bot.ban_chat_member(msg.chat.id, user.id)
                 await send_admin_notification(
@@ -112,47 +116,37 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                     f"Забанен по NSFW-аватару (score={score:.2f}): @{user.username or user.first_name}"
                 )
                 return
-    except Exception:
-        pass
 
-    # 1) pHash-фильтрация аватара
-    try:
-        img = Image.open(BytesIO(bio.getvalue()))
-        ph = imagehash.phash(img)
-        for bad in cfg.get("BAD_HASHES", []):
-            if (ph - imagehash.hex_to_hash(bad)) <= cfg.get("DISTANCE_THRESHOLD", 5):
-                await context.bot.ban_chat_member(msg.chat.id, user.id)
-                await send_admin_notification(
-                    context.bot,
-                    f"Забанен по pHash-аватару: @{user.username or user.first_name}"
-                )
-                return
-    except Exception:
-        pass
-        
-        cfg = load_config()
-        text = msg.text
-    
+            # pHash
+            ph = imagehash.phash(img)
+            for bad in cfg.get("BAD_HASHES", []):
+                if (ph - imagehash.hex_to_hash(bad)) <= cfg.get("DISTANCE_THRESHOLD", 5):
+                    await context.bot.ban_chat_member(msg.chat.id, user.id)
+                    await send_admin_notification(
+                        context.bot,
+                        f"Забанен по pHash-аватару: @{user.username or user.first_name}"
+                    )
+                    return
+    except Exception as ex:
+        print(f"Ошибка NSFW/pHash: {ex}")
+
+    # --- Проверки имени, username, текста, комбинаций ---
     ban = False
-    # 0) 💋 в имени — моментально
     if "💋" in clean_name:
         ban = True
 
-    # 1) подстрока в имени
     if not ban:
         for substr in cfg.get("BANNED_NAME_SUBSTRINGS", []):
             if normalize_text(substr) in name_lower:
                 ban = True
                 break
 
-    # 2) Точное имя
     if not ban:
-        norm_name    = lemmatize_text(name_lower)
+        norm_name = lemmatize_text(name_lower)
         banned_norms = [lemmatize_text(normalize_text(n)) for n in cfg.get("BANNED_FULL_NAMES",[])]
         if norm_name in banned_norms:
             ban = True
 
-    # 2.1) Подстрока в username (этот блок был неправильно расположен у тебя!)
     if not ban and user.username:
         username_lower = normalize_text(user.username)
         for substr in cfg.get("BANNED_USERNAME_SUBSTRINGS", []):
@@ -160,27 +154,23 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 ban = True
                 break
 
-    # 3) Символы
     if not ban:
         matched = [s for s in cfg.get("BANNED_SYMBOLS",[]) if s in clean_name]
         if matched:
             ban = True
 
-    # 4) По словам
     if not ban:
         for word in cfg.get("BANNED_WORDS",[]):
             if word.lower() in text.lower():
                 ban = True
                 break
 
-    # 5) Фразы
     if not ban:
         for phrase in cfg.get("PERMANENT_BLOCK_PHRASES",[]):
             if lemmatize_text(normalize_text(phrase)) in proc_text:
                 ban = True
                 break
 
-    # 6) Комбинации
     if not ban:
         for combo in cfg.get("COMBINED_BLOCKS",[]):
             if all(lemmatize_text(normalize_text(w)) in proc_text for w in combo):
