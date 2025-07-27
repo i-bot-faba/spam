@@ -90,40 +90,47 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     clean_name = re.sub(r'[\uFE00-\uFE0F\u200D]', '', full_name)
     name_lower = normalize_text(clean_name)
 
-    # --- NSFW и pHash фильтрация аватарки ---
+    # === NSFW и pHash фильтрация аватарки ===
     try:
+        print("Пробую проверить NSFW", flush=True)
         photos = await context.bot.get_user_profile_photos(user.id, limit=1)
+        print(f"photos.total_count = {photos.total_count}", flush=True)
         if photos.total_count:
             f = await context.bot.get_file(photos.photos[0][-1].file_id)
             bio = BytesIO()
             await f.download_to_memory(out=bio)
             bio.seek(0)
             img = Image.open(bio).convert("RGB")
-            
-            # NSFW DeepAI
+
+            # --- NSFW DeepAI
             resp = requests.post(
                 "https://api.deepai.org/api/nsfw-detector",
                 files={"image": bio.getvalue()},
                 headers={"api-key": os.getenv("DEEPAI_API_KEY")}
             )
+            print("Ответ от DeepAI:", resp.json(), flush=True)
             score = resp.json().get("output", {}).get("nsfw_score", 0)
-            print(f"NSFW check: user={user.id}, score={score}")
+            print(f"NSFW check: user={user.id}, score={score}", flush=True)
 
             with open("nsfw_log.txt", "a") as logf:
                 logf.write(f"{datetime.utcnow()} user={user.id} score={score}\n")
 
             if score >= cfg.get("NSFW_THRESHOLD", 0.6):
+                print("Баним пользователя!", flush=True)
                 await context.bot.ban_chat_member(msg.chat.id, user.id)
                 await send_admin_notification(
                     context.bot,
                     f"Забанен по NSFW-аватару (score={score:.2f}): @{user.username or user.first_name}"
                 )
                 return
+            else:
+                print("NSFW score ниже порога, не баним", flush=True)
 
-            # pHash
+            # --- pHash
             ph = imagehash.phash(img)
             for bad in cfg.get("BAD_HASHES", []):
                 if (ph - imagehash.hex_to_hash(bad)) <= cfg.get("DISTANCE_THRESHOLD", 5):
+                    print("Бан по pHash", flush=True)
                     await context.bot.ban_chat_member(msg.chat.id, user.id)
                     await send_admin_notification(
                         context.bot,
@@ -131,9 +138,9 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                     )
                     return
     except Exception as ex:
-        print(f"Ошибка NSFW/pHash: {ex}")
+        print(f"Ошибка NSFW/pHash: {ex}", flush=True)
 
-    # --- Проверки имени, username, текста, комбинаций ---
+    # === Проверки имени, username, текста, комбинаций ===
     ban = False
     if "💋" in clean_name:
         ban = True
