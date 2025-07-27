@@ -109,6 +109,9 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             score = resp.json().get("output", {}).get("nsfw_score", 0)
             print(f"NSFW check: user={user.id}, score={score}")
 
+            with open("nsfw_log.txt", "a") as logf:
+                logf.write(f"{datetime.utcnow()} user={user.id} score={score}\n")
+
             if score >= cfg.get("NSFW_THRESHOLD", 0.6):
                 await context.bot.ban_chat_member(msg.chat.id, user.id)
                 await send_admin_notification(
