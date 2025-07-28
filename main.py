@@ -5,13 +5,14 @@ import asyncio
 import re
 import nest_asyncio
 from telegram import ReplyKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from datetime import datetime, timedelta
 from aiohttp import web
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder, MessageHandler, CommandHandler,
-    filters, ContextTypes, ConversationHandler
+    filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 )
 import pymorphy2
 from pymongo import MongoClient
@@ -243,15 +244,28 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = " ".join(context.args)
     cfg = load_config()
-    already = set(cfg.get("BANNED_WORDS", []))
-    words = set(re.findall(r'\b[\w\d\-\_]+\b', text.lower()))
-    new_words = words - already
-    if not new_words:
-        await update.message.reply_text("Всё уже в списке.")
+    stop_phrases = cfg.get("PERMANENT_BLOCK_PHRASES", [])
+    # 1. Проверка на совпадения с уже существующими фразами
+    existing = [p for p in stop_phrases if p in text]
+    if existing:
+        await update.message.reply_text(
+            "В сообщении уже есть такие стоп-фразы:\n" + "\n".join(existing)
+        )
         return
+    # 2. Разбиваем на смысловые фрагменты для добавления
+    parts = re.split(r"[.,;:\-!?]", text)
+    candidates = [p.strip() for p in parts if len(p.strip()) >= 10]
+    if not candidates:
+        await update.message.reply_text("Нет подходящих фраз для добавления.")
+        return
+    # 3. Генерируем кнопки для добавления
+    keyboard = [
+        [InlineKeyboardButton(c, callback_data=f"add_phrase|{c}")]
+        for c in candidates
+    ]
     await update.message.reply_text(
-        "В сообщении есть новые слова (не в списке):\n" +
-        "\n".join(new_words)
+        "Выбери фразу для добавления в стоп-лист:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
     # Можно доработать — добавить добавление по кнопке
 
@@ -323,6 +337,20 @@ async def addspam_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_config(cfg)
     return ConversationHandler.END
 
+async def add_phrase_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data.startswith("add_phrase|"):
+        phrase = data.split("|", 1)[1]
+        cfg = load_config()
+        if phrase not in cfg.get("PERMANENT_BLOCK_PHRASES", []):
+            cfg.setdefault("PERMANENT_BLOCK_PHRASES", []).append(phrase)
+            save_config(cfg)
+            await query.edit_message_text(f"Фраза добавлена:\n{phrase}")
+        else:
+            await query.edit_message_text("Фраза уже есть в списке.")
+
 async def addspam_combo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     words = [w.strip() for w in text.split(",") if w.strip()]
@@ -378,6 +406,8 @@ async def init_app():
     app.add_handler(MessageHandler(filters.ALL, delete_spam_message))
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("analyzeone", analyzeone))
+    app.add_handler(CallbackQueryHandler(add_phrase_callback, pattern="^add_phrase\|"))
     await app.initialize()
     await set_commands(app)
     await app.bot.set_webhook(webhook_url)
