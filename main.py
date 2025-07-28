@@ -38,7 +38,8 @@ banned_col = db["banned_messages"]
 ADMIN_CHAT_ID = 296920330
 
 menu_keyboard = ReplyKeyboardMarkup(
-    [["/menu"]], resize_keyboard=True, one_time_keyboard=False
+    [["/addspam", "/spamlist"], ["/analyze", "/analyzeone"]],
+    resize_keyboard=True, one_time_keyboard=False
 )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -378,6 +379,7 @@ async def init_app():
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("start", start))
     await app.initialize()
+    await set_commands(app)
     await app.bot.set_webhook(webhook_url)
     web_app = web.Application()
     web_app.router.add_get("/", lambda r: web.Response(text="OK"))
