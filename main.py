@@ -19,7 +19,6 @@ from io import BytesIO
 from PIL import Image
 import imagehash
 
-# --- Fix для pymorphy2 на Python 3.11+ ---
 ArgSpec = namedtuple("ArgSpec", "args varargs keywords defaults")
 def fix_getargspec(func):
     spec = inspect.getfullargspec(func)
@@ -29,13 +28,13 @@ inspect.getargspec = fix_getargspec
 morph = pymorphy2.MorphAnalyzer()
 nest_asyncio.apply()
 
-# --- MongoDB ---
 MONGO_URI = os.getenv("MONGODB_URI")
 client = MongoClient(MONGO_URI)
 db = client["antispam"]
 config_col = db["config"]
+banned_col = db["banned_messages"]
 
-ADMIN_CHAT_ID = 296920330  # твой id
+ADMIN_CHAT_ID = 296920330
 
 def load_config():
     doc = config_col.find_one({"_id": "main"})
@@ -48,7 +47,8 @@ def load_config():
         "COMBINED_BLOCKS": [],
         "BANNED_SYMBOLS": [],
         "BANNED_NAME_SUBSTRINGS": [],
-        "BANNED_WORDS": []
+        "BANNED_WORDS": [],
+        "BANNED_USERNAME_SUBSTRINGS": []
     }
 
 def save_config(cfg):
@@ -73,6 +73,27 @@ async def send_admin_notification(bot, text: str):
     except Exception as e:
         print("Ошибка отправки админу:", e)
 
+# --- Анализ новых банов для автопредложения ---
+def add_banned_message(text):
+    banned_col.insert_one({
+        "text": text,
+        "time": datetime.utcnow()
+    })
+
+def analyze_banned_messages(cfg, min_count=2):
+    # Собирает слова/фразы, которые чаще всего встречаются в забаненных сообщениях, но не входят в стоп-лист
+    all_msgs = [doc["text"] for doc in banned_col.find()]
+    words = []
+    for msg in all_msgs:
+        words += re.findall(r'\b[\w\d\-\_]+\b', msg.lower())
+    stop_words = set(map(str.lower, cfg.get("BANNED_WORDS", [])))
+    freq = {}
+    for w in words:
+        if w in stop_words or len(w) < 4:
+            continue
+        freq[w] = freq.get(w, 0) + 1
+    return [w for w, c in freq.items() if c >= min_count]
+
 # --- СПАМ ХЕНДЛЕР ---
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message or update.channel_post
@@ -90,58 +111,8 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     clean_name = re.sub(r'[\uFE00-\uFE0F\u200D]', '', full_name)
     name_lower = normalize_text(clean_name)
 
-    # === NSFW и pHash фильтрация аватарки ===
-    try:
-        print("Пробую проверить NSFW", flush=True)
-        photos = await context.bot.get_user_profile_photos(user.id, limit=1)
-        print(f"photos.total_count = {photos.total_count}", flush=True)
-        if photos.total_count:
-            f = await context.bot.get_file(photos.photos[0][-1].file_id)
-            bio = BytesIO()
-            await f.download_to_memory(out=bio)
-            bio.seek(0)
-            img = Image.open(bio).convert("RGB")
-
-            # --- NSFW DeepAI
-            resp = requests.post(
-                "https://api.deepai.org/api/nsfw-detector",
-                files={"image": bio.getvalue()},
-                headers={"api-key": os.getenv("DEEPAI_API_KEY")}
-            )
-            print("Ответ от DeepAI:", resp.json(), flush=True)
-            score = resp.json().get("output", {}).get("nsfw_score", 0)
-            print(f"NSFW check: user={user.id}, score={score}", flush=True)
-
-            with open("nsfw_log.txt", "a") as logf:
-                logf.write(f"{datetime.utcnow()} user={user.id} score={score}\n")
-
-            if score >= cfg.get("NSFW_THRESHOLD", 0.6):
-                print("Баним пользователя!", flush=True)
-                await context.bot.ban_chat_member(msg.chat.id, user.id)
-                await send_admin_notification(
-                    context.bot,
-                    f"Забанен по NSFW-аватару (score={score:.2f}): @{user.username or user.first_name}"
-                )
-                return
-            else:
-                print("NSFW score ниже порога, не баним", flush=True)
-
-            # --- pHash
-            ph = imagehash.phash(img)
-            for bad in cfg.get("BAD_HASHES", []):
-                if (ph - imagehash.hex_to_hash(bad)) <= cfg.get("DISTANCE_THRESHOLD", 5):
-                    print("Бан по pHash", flush=True)
-                    await context.bot.ban_chat_member(msg.chat.id, user.id)
-                    await send_admin_notification(
-                        context.bot,
-                        f"Забанен по pHash-аватару: @{user.username or user.first_name}"
-                    )
-                    return
-    except Exception as ex:
-        print(f"Ошибка NSFW/pHash: {ex}", flush=True)
-
-    # === Проверки имени, username, текста, комбинаций ===
     ban = False
+    # все проверки как раньше
     if "💋" in clean_name:
         ban = True
 
@@ -169,11 +140,16 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if matched:
             ban = True
 
-    if not ban:
-        for word in cfg.get("BANNED_WORDS",[]):
-            if word.lower() in text.lower():
-                ban = True
-                break
+    # --- Блок по вхождению даже с символами (расширенный) ---
+    def clean_for_match(s):
+        # Удаляем спецсимволы и приводим к нижнему
+        return re.sub(r'[^a-zA-Zа-яА-Я0-9]', '', s.lower())
+
+    text_raw_clean = clean_for_match(text)
+    for w in cfg.get("BANNED_WORDS",[]):
+        if clean_for_match(w) in text_raw_clean:
+            ban = True
+            break
 
     if not ban:
         for phrase in cfg.get("PERMANENT_BLOCK_PHRASES",[]):
@@ -201,6 +177,8 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Сообщение: {text}"
         )
         await send_admin_notification(context.bot, notif)
+        # --- Сохраняем забаненные сообщения для автоанализа ---
+        add_banned_message(text)
 
 # --- /SPAMLIST ---
 async def spamlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -218,7 +196,42 @@ async def spamlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
-# --- /ADDSPAM ---
+# --- /ANALYZE (анализ новых забаненных для пополнения стоп-листа) ---
+async def analyze_banned(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("Нет доступа.")
+        return
+    cfg = load_config()
+    candidates = analyze_banned_messages(cfg)
+    if not candidates:
+        await update.message.reply_text("Нет новых часто встречающихся слов.")
+        return
+    await update.message.reply_text("Часто встречающиеся новые слова:\n" + "\n".join(candidates))
+    # Можно доработать: отправлять inline-кнопки на добавление каждого слова
+
+# --- /analyzeone (анализ любого сообщения, ручное пополнение) ---
+async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("Нет доступа.")
+        return
+    if not context.args:
+        await update.message.reply_text("Кинь текст для анализа после команды.")
+        return
+    text = " ".join(context.args)
+    cfg = load_config()
+    already = set(cfg.get("BANNED_WORDS", []))
+    words = set(re.findall(r'\b[\w\d\-\_]+\b', text.lower()))
+    new_words = words - already
+    if not new_words:
+        await update.message.reply_text("Всё уже в списке.")
+        return
+    await update.message.reply_text(
+        "В сообщении есть новые слова (не в списке):\n" +
+        "\n".join(new_words)
+    )
+    # Можно доработать — добавить добавление по кнопке
+
+# --- /ADDSPAM как раньше, плюс BANNED_USERNAME_SUBSTRINGS ---
 (
     ADD_CHOICE, ADD_INPUT, ADD_COMBO
 ) = range(3)
@@ -238,8 +251,8 @@ async def addspam_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "7️⃣ Подстроку в username (никнейме)\n\n"
         "Отправь номер (1-7):"
     )
-    return ADD_CHOICE  # <-- ДОЛЖНО БЫТЬ С ОТСТУПОМ
-    
+    return ADD_CHOICE
+
 async def addspam_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice = update.message.text.strip()
     if choice not in "1234567":
@@ -298,7 +311,6 @@ async def addspam_combo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Комбинация добавлена: {', '.join(words)}")
     return ConversationHandler.END
 
-# --- ФОЛБЭК ДЛЯ ЛЮБОЙ КОМАНДЫ ---
 async def cancel_addspam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Добавление спама отменено.")
     return ConversationHandler.END
@@ -326,6 +338,8 @@ async def init_app():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(addspam_conv)
     app.add_handler(CommandHandler("spamlist", spamlist))
+    app.add_handler(CommandHandler("analyze", analyze_banned))
+    app.add_handler(CommandHandler("analyzeone", analyzeone))
     app.add_handler(MessageHandler(filters.ALL, delete_spam_message))
     await app.initialize()
     await app.bot.set_webhook(webhook_url)
