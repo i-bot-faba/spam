@@ -4,6 +4,7 @@ import os
 import asyncio
 import re
 import nest_asyncio
+from telegram import ReplyKeyboardMarkup
 from datetime import datetime, timedelta
 from aiohttp import web
 from telegram import Update
@@ -35,6 +36,16 @@ config_col = db["config"]
 banned_col = db["banned_messages"]
 
 ADMIN_CHAT_ID = 296920330
+
+menu_keyboard = ReplyKeyboardMarkup(
+    [["/menu"]], resize_keyboard=True, one_time_keyboard=False
+)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Привет! Для меню нажми кнопку ниже или напиши /menu",
+        reply_markup=menu_keyboard
+    )
 
 def load_config():
     doc = config_col.find_one({"_id": "main"})
@@ -72,6 +83,18 @@ async def send_admin_notification(bot, text: str):
         await bot.send_message(chat_id=ADMIN_CHAT_ID, text=text)
     except Exception as e:
         print("Ошибка отправки админу:", e)
+
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "📋 <b>Доступные команды:</b>\n"
+        "/addspam — добавить спам-слово/фразу\n"
+        "/spamlist — показать текущий стоп-лист\n"
+        "/analyzeone — анализировать сообщение\n"
+        "/analyze — анализ часто встречающихся слов\n"
+    )
+    await update.message.reply_text(
+        text, parse_mode=ParseMode.HTML
+    )
 
 # --- Анализ новых банов для автопредложения ---
 def add_banned_message(text):
@@ -352,6 +375,8 @@ async def init_app():
     app.add_handler(CommandHandler("analyze", analyze_banned))
     app.add_handler(CommandHandler("analyzeone", analyzeone))
     app.add_handler(MessageHandler(filters.ALL, delete_spam_message))
+    app.add_handler(CommandHandler("menu", menu_command))
+    app.add_handler(CommandHandler("start", start))
     await app.initialize()
     await app.bot.set_webhook(webhook_url)
     web_app = web.Application()
