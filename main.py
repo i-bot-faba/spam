@@ -236,6 +236,7 @@ async def analyze_banned(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- /analyzeone (анализ любого сообщения, ручное пополнение) ---
 async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("analyzeone called", flush=True)
     if update.message.from_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("Нет доступа.")
         return
@@ -402,7 +403,6 @@ async def init_app():
     app.add_handler(addspam_conv)
     app.add_handler(CommandHandler("spamlist", spamlist))
     app.add_handler(CommandHandler("analyze", analyze_banned))
-    app.add_handler(CommandHandler("analyzeone", analyzeone))
     app.add_handler(MessageHandler(filters.ALL, delete_spam_message))
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("start", start))
