@@ -326,6 +326,17 @@ addspam_conv = ConversationHandler(
     per_user=True
 )
 
+from telegram import BotCommand
+
+async def set_commands(app):
+    commands = [
+        BotCommand("addspam", "Добавить спам-слово/фразу"),
+        BotCommand("spamlist", "Показать текущий стоп-лист"),
+        BotCommand("analyzeone", "Анализировать сообщение"),
+        BotCommand("start", "Информация о боте"),
+    ]
+    await app.bot.set_my_commands(commands)
+    
 # --- ЗАПУСК ---
 async def init_app():
     port  = int(os.environ.get("PORT", 8443))
