@@ -236,13 +236,30 @@ async def analyze_banned(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- /analyzeone (анализ любого сообщения, ручное пополнение) ---
 async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("analyzeone called", flush=True)
     if update.message.from_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("Нет доступа.")
         return
     if not context.args:
         await update.message.reply_text("Кинь текст для анализа после команды.")
         return
+    text = " ".join(context.args)
+    cfg = load_config()
+    already = set(cfg.get("BANNED_WORDS", []))
+    words = set(re.findall(r'\b[\w\d\-\_]+\b', text.lower()))
+    new_words = words - already
+    if not new_words:
+        await update.message.reply_text("Всё уже в списке.")
+        return
+    buttons = []
+    for idx, w in enumerate(new_words):
+        if len(w) <= 50:  # ограничиваем длину callback_data
+            buttons.append([InlineKeyboardButton(w, callback_data=f"addword_{w}")])
+    reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+
+    await update.message.reply_text(
+        "В сообщении есть новые слова (не в списке):",
+        reply_markup=reply_markup
+    )
     text = " ".join(context.args)
     cfg = load_config()
     stop_phrases = cfg.get("PERMANENT_BLOCK_PHRASES", [])
