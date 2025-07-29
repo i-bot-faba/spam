@@ -431,12 +431,12 @@ async def init_app():
     app.add_handler(addspam_conv)
     app.add_handler(CommandHandler("spamlist", spamlist))
     app.add_handler(CommandHandler("analyze", analyze_banned))
-    app.add_handler(MessageHandler(filters.ALL, delete_spam_message))
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("analyzeone", analyzeone))
     app.add_handler(CallbackQueryHandler(add_phrase_callback, pattern="^add_phrase\|"))
     app.add_handler(CallbackQueryHandler(addword_callback, pattern=r"^addword_"))
+    app.add_handler(MessageHandler(filters.ALL, delete_spam_message))  # <-- СТАВЬ В САМЫЙ НИЗ!
     await app.initialize()
     await set_commands(app)
     await app.bot.set_webhook(webhook_url)
