@@ -239,27 +239,29 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("Нет доступа.")
         return
+
     if not context.args:
         await update.message.reply_text("Кинь текст для анализа после команды.")
         return
+
     text = " ".join(context.args)
     cfg = load_config()
     already = set(cfg.get("BANNED_WORDS", []))
     words = set(re.findall(r'\b[\w\d\-\_]+\b', text.lower()))
     new_words = words - already
-    if not new_words:
-        await update.message.reply_text("Всё уже в списке.")
-        return
-    buttons = []
-    for idx, w in enumerate(new_words):
-        if len(w) <= 50:  # ограничиваем длину callback_data
-            buttons.append([InlineKeyboardButton(w, callback_data=f"addword_{w}")])
-    reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
+    if new_words:
+        buttons = []
+        for w in new_words:
+            if len(w) <= 50:
+                buttons.append([InlineKeyboardButton(w, callback_data=f"addword_{w}")])
+        reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
 
-    await update.message.reply_text(
-        "В сообщении есть новые слова (не в списке):",
-        reply_markup=reply_markup
-    )
+        await update.message.reply_text(
+            "В сообщении есть новые слова (не в списке):",
+            reply_markup=reply_markup
+        )
+        return   # <--- ВАЖНО! Больше ничего не делаем
+
     text = " ".join(context.args)
     cfg = load_config()
     stop_phrases = cfg.get("PERMANENT_BLOCK_PHRASES", [])
@@ -278,6 +280,21 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     # 3. Генерируем кнопки для добавления
     keyboard = [
+        [Inlinstop_phrases = cfg.get("PERMANENT_BLOCK_PHRASES", [])
+    existing = [p for p in stop_phrases if p in text]
+    if existing:
+        await update.message.reply_text(
+            "В сообщении уже есть такие стоп-фразы:\n" + "\n".join(existing)
+        )
+        return
+
+    parts = re.split(r"[.,;:\-!?]", text)
+    candidates = [p.strip() for p in parts if len(p.strip()) >= 10]
+    if not candidates:
+        await update.message.reply_text("Нет подходящих фраз для добавления.")
+        return
+
+    keyboard = [
         [InlineKeyboardButton(c, callback_data=f"add_phrase|{c}")]
         for c in candidates
     ]
@@ -285,6 +302,7 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Выбери фразу для добавления в стоп-лист:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+    return
     # Можно доработать — добавить добавление по кнопке
 
 # --- /ADDSPAM как раньше, плюс BANNED_USERNAME_SUBSTRINGS ---
