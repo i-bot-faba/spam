@@ -249,18 +249,18 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     already = set(cfg.get("BANNED_WORDS", []))
     words = set(re.findall(r'\b[\w\d\-\_]+\b', text.lower()))
     new_words = words - already
+
     if new_words:
         buttons = []
         for w in new_words:
             if len(w) <= 50:
                 buttons.append([InlineKeyboardButton(w, callback_data=f"addword_{w}")])
         reply_markup = InlineKeyboardMarkup(buttons) if buttons else None
-
         await update.message.reply_text(
             "В сообщении есть новые слова (не в списке):",
             reply_markup=reply_markup
         )
-        return   # <--- ВАЖНО! Больше ничего не делаем
+        return
 
     text = " ".join(context.args)
     cfg = load_config()
