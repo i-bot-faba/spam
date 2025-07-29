@@ -280,7 +280,7 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     # 3. Генерируем кнопки для добавления
     keyboard = [
-        [Inlinstop_phrases = cfg.get("PERMANENT_BLOCK_PHRASES", []
+        stop_phrases = cfg.get("PERMANENT_BLOCK_PHRASES", [])
     existing = [p for p in stop_phrases if p in text]
     if existing:
         await update.message.reply_text(
