@@ -250,6 +250,7 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     words = set(re.findall(r'\b[\w\d\-\_]+\b', text.lower()))
     new_words = words - already
 
+    # Блок для кнопок слов
     if new_words:
         buttons = []
         for w in new_words:
@@ -262,38 +263,19 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    text = " ".join(context.args)
-    cfg = load_config()
+    # Если нет новых слов, проверяем и делаем кнопки для фраз
     stop_phrases = cfg.get("PERMANENT_BLOCK_PHRASES", [])
-    # 1. Проверка на совпадения с уже существующими фразами
     existing = [p for p in stop_phrases if p in text]
     if existing:
         await update.message.reply_text(
             "В сообщении уже есть такие стоп-фразы:\n" + "\n".join(existing)
         )
         return
-    # 2. Разбиваем на смысловые фрагменты для добавления
     parts = re.split(r"[.,;:\-!?]", text)
     candidates = [p.strip() for p in parts if len(p.strip()) >= 10]
     if not candidates:
         await update.message.reply_text("Нет подходящих фраз для добавления.")
         return
-    # 3. Генерируем кнопки для добавления
-    keyboard = [
-        stop_phrases = cfg.get("PERMANENT_BLOCK_PHRASES", [])
-    existing = [p for p in stop_phrases if p in text]
-    if existing:
-        await update.message.reply_text(
-            "В сообщении уже есть такие стоп-фразы:\n" + "\n".join(existing)
-        )
-        return
-
-    parts = re.split(r"[.,;:\-!?]", text)
-    candidates = [p.strip() for p in parts if len(p.strip()) >= 10]
-    if not candidates:
-        await update.message.reply_text("Нет подходящих фраз для добавления.")
-        return
-
     keyboard = [
         [InlineKeyboardButton(c, callback_data=f"add_phrase|{c}")]
         for c in candidates
@@ -303,7 +285,6 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
     return
-    # Можно доработать — добавить добавление по кнопке
 
 # --- /ADDSPAM как раньше, плюс BANNED_USERNAME_SUBSTRINGS ---
 (
@@ -448,37 +429,4 @@ async def init_app():
     print("🔗 Webhook:", webhook_url)
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(addspam_conv)
-    app.add_handler(CommandHandler("spamlist", spamlist))
-    app.add_handler(CommandHandler("analyze", analyze_banned))
-    app.add_handler(MessageHandler(filters.ALL, delete_spam_message))
-    app.add_handler(CommandHandler("menu", menu_command))
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("analyzeone", analyzeone))
-    app.add_handler(CallbackQueryHandler(add_phrase_callback, pattern="^add_phrase\|"))
-    app.add_handler(CallbackQueryHandler(addword_callback, pattern=r"^addword_"))
-    await app.initialize()
-    await set_commands(app)
-    await app.bot.set_webhook(webhook_url)
-    web_app = web.Application()
-    web_app.router.add_get("/", lambda r: web.Response(text="OK"))
-    web_app.router.add_post("/webhook", lambda r: handle_webhook(r, app))
-    return web_app, port
-
-async def handle_webhook(request, app):
-    data   = await request.json()
-    update = Update.de_json(data, app.bot)
-    await app.process_update(update)
-    return web.Response(text="OK")
-
-async def main():
-    web_app, port = await init_app()
-    runner = web.AppRunner(web_app)
-    await runner.setup()
-    site   = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    print(f"🚀 Running on port {port}")
-    while True:
-        await asyncio.sleep(3600)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    app.add_handler
