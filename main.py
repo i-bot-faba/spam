@@ -396,6 +396,18 @@ addspam_conv = ConversationHandler(
     per_user=True
 )
 
+async def addword_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    word = query.data.replace("addword_", "")
+    cfg = load_config()
+    if word not in cfg.get("BANNED_WORDS", []):
+        cfg.setdefault("BANNED_WORDS", []).append(word)
+        save_config(cfg)
+        await query.answer("Слово добавлено!")
+        await query.edit_message_text(f"Слово добавлено: {word}")
+    else:
+        await query.answer("Уже в списке!")
+
 from telegram import BotCommand
 
 async def set_commands(app):
@@ -425,6 +437,7 @@ async def init_app():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("analyzeone", analyzeone))
     app.add_handler(CallbackQueryHandler(add_phrase_callback, pattern="^add_phrase\|"))
+    app.add_handler(CallbackQueryHandler(addword_callback, pattern=r"^addword_"))
     await app.initialize()
     await set_commands(app)
     await app.bot.set_webhook(webhook_url)
