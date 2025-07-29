@@ -295,8 +295,8 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyboard = [
-        [InlineKeyboardButton(c, callback_data=f"add_phrase|{c}")]
-        for c in candidates
+    [InlineKeyboardButton(c, callback_data=f"add_phrase|{c}")]
+    for c in candidates
     ]
     await update.message.reply_text(
         "Выбери фразу для добавления в стоп-лист:",
