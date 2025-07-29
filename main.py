@@ -429,4 +429,37 @@ async def init_app():
     print("🔗 Webhook:", webhook_url)
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(addspam_conv)
-    app.add_handler
+    app.add_handler(CommandHandler("spamlist", spamlist))
+    app.add_handler(CommandHandler("analyze", analyze_banned))
+    app.add_handler(MessageHandler(filters.ALL, delete_spam_message))
+    app.add_handler(CommandHandler("menu", menu_command))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("analyzeone", analyzeone))
+    app.add_handler(CallbackQueryHandler(add_phrase_callback, pattern="^add_phrase\|"))
+    app.add_handler(CallbackQueryHandler(addword_callback, pattern=r"^addword_"))
+    await app.initialize()
+    await set_commands(app)
+    await app.bot.set_webhook(webhook_url)
+    web_app = web.Application()
+    web_app.router.add_get("/", lambda r: web.Response(text="OK"))
+    web_app.router.add_post("/webhook", lambda r: handle_webhook(r, app))
+    return web_app, port
+
+async def handle_webhook(request, app):
+    data = await request.json()
+    update = Update.de_json(data, app.bot)
+    await app.process_update(update)
+    return web.Response(text="OK")
+
+async def main():
+    web_app, port = await init_app()
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"🚀 Running on port {port}")
+    while True:
+        await asyncio.sleep(3600)
+
+if __name__ == "__main__":
+    asyncio.run(main())
