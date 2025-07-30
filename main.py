@@ -247,16 +247,15 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = " ".join(context.args)
     cfg = load_config()
     stop_phrases = cfg.get("PERMANENT_BLOCK_PHRASES", [])
-    existing = [p for p in stop_phrases if p in text]
-    if existing:
-        await update.message.reply_text(
-            "В сообщении уже есть такие стоп-фразы:\n" + "\n".join(existing)
-        )
-        return
+
     parts = re.split(r"[.,;:\-!?]", text)
-    candidates = [p.strip() for p in parts if len(p.strip()) >= 10]
+    # Оставляем только те фразы, которых нет в стоп-листе и длина >= 10
+    candidates = [
+        p.strip() for p in parts
+        if len(p.strip()) >= 10 and p.strip() not in stop_phrases
+    ]
     if not candidates:
-        await update.message.reply_text("Нет подходящих фраз для добавления.")
+        await update.message.reply_text("Нет подходящих новых фраз для добавления.")
         return
     keyboard = [
         [InlineKeyboardButton(c, callback_data=f"add_phrase|{c}")]
