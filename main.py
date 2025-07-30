@@ -3,6 +3,7 @@ from collections import namedtuple
 import os
 import asyncio
 import re
+import hashlib
 import nest_asyncio
 from telegram import ReplyKeyboardMarkup
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -222,19 +223,6 @@ async def spamlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 # --- /ANALYZE (анализ новых забаненных для пополнения стоп-листа) ---
-async def analyze_banned(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != ADMIN_CHAT_ID:
-        await update.message.reply_text("Нет доступа.")
-        return
-    cfg = load_config()
-    candidates = analyze_banned_messages(cfg)
-    if not candidates:
-        await update.message.reply_text("Нет новых часто встречающихся слов.")
-        return
-    await update.message.reply_text("Часто встречающиеся новые слова:\n" + "\n".join(candidates))
-    # Можно доработать: отправлять inline-кнопки на добавление каждого слова
-
-# --- /analyzeone (анализ любого сообщения, ручное пополнение) ---
 async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("Нет доступа.")
@@ -249,7 +237,6 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stop_phrases = cfg.get("PERMANENT_BLOCK_PHRASES", [])
 
     parts = re.split(r"[.,;:\-!?]", text)
-    # Оставляем только те фразы, которых нет в стоп-листе и длина >= 10
     candidates = [
         p.strip() for p in parts
         if len(p.strip()) >= 10 and p.strip() not in stop_phrases
@@ -257,15 +244,40 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not candidates:
         await update.message.reply_text("Нет подходящих новых фраз для добавления.")
         return
-    keyboard = [
-        [InlineKeyboardButton(c, callback_data=f"add_phrase|{c}")]
-        for c in candidates
-    ]
+
+    mapping = {}
+    keyboard = []
+    for c in candidates:
+        short_hash = hashlib.sha1(c.encode()).hexdigest()[:8]
+        mapping[short_hash] = c
+        keyboard.append([InlineKeyboardButton(c, callback_data=f"add_phrase|{short_hash}")])
+    context.user_data["phrase_hash_mapping"] = mapping
+
     await update.message.reply_text(
         "Выбери фразу для добавления в стоп-лист:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
     return
+
+# обработчик callback для add_phrase
+async def add_phrase_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data.startswith("add_phrase|"):
+        short_hash = data.split("|", 1)[1]
+        mapping = context.user_data.get("phrase_hash_mapping", {})
+        phrase = mapping.get(short_hash)
+        if not phrase:
+            await query.edit_message_text("Фраза не найдена или устарела.")
+            return
+        cfg = load_config()
+        if phrase not in cfg.get("PERMANENT_BLOCK_PHRASES", []):
+            cfg.setdefault("PERMANENT_BLOCK_PHRASES", []).append(phrase)
+            save_config(cfg)
+            await query.edit_message_text(f"Фраза добавлена:\n{phrase}")
+        else:
+            await query.edit_message_text("Фраза уже есть в списке.")
 
 # --- /ADDSPAM как раньше, плюс BANNED_USERNAME_SUBSTRINGS ---
 (
