@@ -222,6 +222,17 @@ async def spamlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
+async def analyze_banned(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id != ADMIN_CHAT_ID:
+        await update.message.reply_text("Нет доступа.")
+        return
+    cfg = load_config()
+    candidates = analyze_banned_messages(cfg)
+    if not candidates:
+        await update.message.reply_text("Нет новых часто встречающихся слов.")
+        return
+    await update.message.reply_text("Часто встречающиеся новые слова:\n" + "\n".join(candidates))
+    
 # --- /ANALYZE (анализ новых забаненных для пополнения стоп-листа) ---
 async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_CHAT_ID:
