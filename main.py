@@ -22,7 +22,7 @@ from io import BytesIO
 from PIL import Image
 import imagehash
 
-PHRASE_HASH_MAP = {}candidates
+PHRASE_HASH_MAP = {}
 
 ArgSpec = namedtuple("ArgSpec", "args varargs keywords defaults")
 def fix_getargspec(func):
