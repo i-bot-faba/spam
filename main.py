@@ -246,16 +246,21 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = " ".join(context.args)
     cfg = load_config()
     stop_phrases = cfg.get("PERMANENT_BLOCK_PHRASES", [])
+    banned_words = set(cfg.get("BANNED_WORDS", []))
 
     parts = re.split(r"[.,;:\-!?]", text)
-    candidates = [
-        p.strip() for p in parts
-        if len(p.strip()) >= 10 and p.strip() not in stop_phrases
-    ]
+    candidates = []
+    for p in parts:
+        phrase = p.strip()
+        if len(phrase) >= 10 and phrase not in stop_phrases:
+            if is_spam_like(phrase, banned_words, stop_phrases):
+                candidates.append(phrase)
+
     if not candidates:
         await update.message.reply_text("Нет подходящих новых фраз для добавления.")
         return
 
+    import hashlib
     mapping = {}
     keyboard = []
     for c in candidates:
