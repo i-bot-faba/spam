@@ -44,6 +44,16 @@ menu_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True, one_time_keyboard=False
 )
 
+def is_spam_like(phrase, banned_words, stop_phrases):
+    words = set(phrase.lower().split())
+    for bw in banned_words:
+        if bw.lower() in words:
+            return True
+    for sp in stop_phrases:
+        if sp.lower() in phrase.lower():
+            return True
+    return False
+    
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! Для меню нажми кнопку ниже или напиши /menu",
