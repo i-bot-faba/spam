@@ -255,7 +255,7 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Кинь текст для анализа после команды.")
         return
 
-        text = " ".join(context.args)
+    text = " ".join(context.args) 
     cfg = load_config()
     stop_phrases = cfg.get("PERMANENT_BLOCK_PHRASES", [])
 
