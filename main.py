@@ -22,6 +22,8 @@ from io import BytesIO
 from PIL import Image
 import imagehash
 
+PHRASE_HASH_MAP = {}candidates
+
 ArgSpec = namedtuple("ArgSpec", "args varargs keywords defaults")
 def fix_getargspec(func):
     spec = inspect.getfullargspec(func)
@@ -253,31 +255,24 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Кинь текст для анализа после команды.")
         return
 
-    text = " ".join(context.args)
+        text = " ".join(context.args)
     cfg = load_config()
     stop_phrases = cfg.get("PERMANENT_BLOCK_PHRASES", [])
-    banned_words = set(cfg.get("BANNED_WORDS", []))
 
     parts = re.split(r"[.,;:\-!?]", text)
-    candidates = []
-    for p in parts:
-        phrase = p.strip()
-        if len(phrase) >= 10 and phrase not in stop_phrases:
-            if is_spam_like(phrase, banned_words, stop_phrases):
-                candidates.append(phrase)
-
+    candidates = [
+        p.strip() for p in parts
+        if len(p.strip()) >= 10 and p.strip() not in stop_phrases
+    ]
     if not candidates:
         await update.message.reply_text("Нет подходящих новых фраз для добавления.")
         return
 
-    import hashlib
-    mapping = {}
     keyboard = []
     for c in candidates:
         short_hash = hashlib.sha1(c.encode()).hexdigest()[:8]
-        mapping[short_hash] = c
+        PHRASE_HASH_MAP[short_hash] = c  # сохраняем соответствие хэш-фраза
         keyboard.append([InlineKeyboardButton(c, callback_data=f"add_phrase|{short_hash}")])
-    context.user_data["phrase_hash_mapping"] = mapping
 
     await update.message.reply_text(
         "Выбери фразу для добавления в стоп-лист:",
@@ -292,11 +287,10 @@ async def add_phrase_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     data = query.data
     if data.startswith("add_phrase|"):
         short_hash = data.split("|", 1)[1]
-        mapping = context.user_data.get("phrase_hash_mapping", {})
-        phrase = mapping.get(short_hash)
+        phrase = PHRASE_HASH_MAP.get(short_hash)  # берем фразу по хэшу
         if not phrase:
-            await query.edit_message_text("Фраза не найдена или устарела.")
-            return
+            await query.edit_message_text("Фраза не найдена.")
+            returnphrase
         cfg = load_config()
         if phrase not in cfg.get("PERMANENT_BLOCK_PHRASES", []):
             cfg.setdefault("PERMANENT_BLOCK_PHRASES", []).append(phrase)
