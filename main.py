@@ -271,7 +271,7 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     for c in candidates:
         short_hash = hashlib.sha1(c.encode()).hexdigest()[:8]
-        PHRASE_HASH_MAP[short_hash] = c  # сохраняем соответствие хэш-фраза
+        PHRASE_HASH_MAP[short_hash] = c
         keyboard.append([InlineKeyboardButton(c, callback_data=f"add_phrase|{short_hash}")])
 
     await update.message.reply_text(
