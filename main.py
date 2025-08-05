@@ -4,6 +4,7 @@ import os
 import asyncio
 import re
 import hashlib
+import regex
 import nest_asyncio
 from telegram import ReplyKeyboardMarkup
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -139,9 +140,20 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     user = msg.from_user
-    cfg = load_config()
-    text = msg.text
-    proc_text = lemmatize_text(normalize_text(text))
+    name = user.first_name or ""
+    if user.last_name:
+        name += " " + user.last_name
+    # Проверка: два одинаковых эмодзи по краям
+    match = regex.match(r"^(?P<emoji>\X)\s?.+\s?(?P=emoji)$", name, flags=regex.UNICODE)
+    if match and len(match.group("emoji")) > 0:
+        # баним
+        try:
+            await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
+        except Exception: pass
+        try:
+            await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
+        except Exception: pass
+        return
 
     full_name = user.first_name or ""
     if user.last_name:
@@ -255,7 +267,7 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Кинь текст для анализа после команды.")
         return
 
-    text = " ".join(context.args) 
+    text = " ".join(context.args)
     cfg = load_config()
     stop_phrases = cfg.get("PERMANENT_BLOCK_PHRASES", [])
 
@@ -268,17 +280,68 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Нет подходящих новых фраз для добавления.")
         return
 
+
     keyboard = []
     for c in candidates:
         short_hash = hashlib.sha1(c.encode()).hexdigest()[:8]
         PHRASE_HASH_MAP[short_hash] = c
-        keyboard.append([InlineKeyboardButton(c, callback_data=f"add_phrase|{short_hash}")])
-
+        keyboard.append([
+            InlineKeyboardButton(
+                text=f"☐ {c}", callback_data=f"toggle_{short_hash}_0"
+            )
+        ])
+    # Кнопка подтвердить
+    keyboard.append([InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_phrases")])
     await update.message.reply_text(
-        "Выбери фразу для добавления в стоп-лист:",
+        "Выбери фразы для добавления в стоп-лист (можно несколько):",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    return
+    context.user_data["selected_phrases"] = set()
+
+async def select_phrase_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+
+    if data.startswith("toggle_"):
+        parts = data.split("_")
+        short_hash = parts[1]
+        selected = parts[2] == "1"
+
+        selected_phrases = context.user_data.get("selected_phrases", set())
+        if not selected:
+            selected_phrases.add(short_hash)
+        else:
+            selected_phrases.discard(short_hash)
+        context.user_data["selected_phrases"] = selected_phrases
+
+        # Перерисовать кнопки
+        keyboard = []
+        for sh, phrase in PHRASE_HASH_MAP.items():
+            checked = "☑️" if sh in selected_phrases else "☐"
+            cb_selected = "1" if sh in selected_phrases else "0"
+            keyboard.append([
+                InlineKeyboardButton(
+                    text=f"{checked} {phrase}", callback_data=f"toggle_{sh}_{cb_selected}"
+                )
+            ])
+        keyboard.append([InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_phrases")])
+        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data == "confirm_phrases":
+        selected = context.user_data.get("selected_phrases", set())
+        if not selected:
+            await query.answer("Ничего не выбрано.")
+            return
+        cfg = load_config()
+        phrases = [PHRASE_HASH_MAP[sh] for sh in selected]
+        for phrase in phrases:
+            if phrase not in cfg.get("PERMANENT_BLOCK_PHRASES", []):
+                cfg.setdefault("PERMANENT_BLOCK_PHRASES", []).append(phrase)
+        save_config(cfg)
+        await query.edit_message_text(
+            "Фразы добавлены:\n" + "\n".join(phrases)
+        )
+        context.user_data["selected_phrases"] = set()
 
 # обработчик callback для add_phrase
 async def add_phrase_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -290,7 +353,7 @@ async def add_phrase_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         phrase = PHRASE_HASH_MAP.get(short_hash)  # берем фразу по хэшу
         if not phrase:
             await query.edit_message_text("Фраза не найдена.")
-            returnphrase
+            return
         cfg = load_config()
         if phrase not in cfg.get("PERMANENT_BLOCK_PHRASES", []):
             cfg.setdefault("PERMANENT_BLOCK_PHRASES", []).append(phrase)
@@ -367,20 +430,6 @@ async def addspam_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_config(cfg)
     return ConversationHandler.END
 
-async def add_phrase_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    if data.startswith("add_phrase|"):
-        phrase = data.split("|", 1)[1]
-        cfg = load_config()
-        if phrase not in cfg.get("PERMANENT_BLOCK_PHRASES", []):
-            cfg.setdefault("PERMANENT_BLOCK_PHRASES", []).append(phrase)
-            save_config(cfg)
-            await query.edit_message_text(f"Фраза добавлена:\n{phrase}")
-        else:
-            await query.edit_message_text("Фраза уже есть в списке.")
-
 async def addspam_combo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     words = [w.strip() for w in text.split(",") if w.strip()]
@@ -447,6 +496,7 @@ async def init_app():
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("analyzeone", analyzeone))
+    app.add_handler(CallbackQueryHandler(select_phrase_callback, pattern="^(toggle_|confirm_phrases)"))
     app.add_handler(CallbackQueryHandler(add_phrase_callback, pattern="^add_phrase\|"))
     app.add_handler(CallbackQueryHandler(addword_callback, pattern=r"^addword_"))
     app.add_handler(MessageHandler(filters.ALL, delete_spam_message))  # <-- СТАВЬ В САМЫЙ НИЗ!
