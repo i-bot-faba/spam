@@ -140,6 +140,9 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     user = msg.from_user
+    text = msg.text
+    cfg = load_config()
+    proc_text = lemmatize_text(normalize_text(text))
     name = user.first_name or ""
     if user.last_name:
         name += " " + user.last_name
