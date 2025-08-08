@@ -146,11 +146,11 @@ def analyze_banned_messages(cfg, min_count=2):
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message or update.channel_post
     if msg.text and is_only_emojis(msg.text):
-    try:
-        await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
-    except Exception:
-        pass
-    return
+        try:
+            await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
+        except Exception:
+            pass
+        return
 
     user = msg.from_user
     text = msg.text
