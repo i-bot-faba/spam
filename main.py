@@ -31,8 +31,8 @@ import imagehash
 
 # --- NSFW (аватар) ---
 try:
-    from nudenet import NudeClassifierLite
-    _NSFW_CLASSIFIER = NudeClassifierLite()  # лёгкая модель
+    from nudenet import NudeClassifier
+    _NSFW_CLASSIFIER = NudeClassifier()  # авто-скачает веса при первом запуске
     NSFW_ENABLED = True
     print("NSFW avatar check: enabled")
 except Exception as e:
