@@ -11,6 +11,4 @@ requests
 regex
 emoji
 nudenet==3.4.2
-onnxruntime==1.16.3
-opennsfw2
 pillow
