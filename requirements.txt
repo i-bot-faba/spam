@@ -10,3 +10,5 @@ imagehash
 requests
 regex
 emoji
+nudenet==3.0.9
+tensorflow==2.15.0
