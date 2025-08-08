@@ -185,7 +185,7 @@ async def is_user_avatar_nsfw(user_id: int, context: ContextTypes.DEFAULT_TYPE, 
         await tg_file.download_to_drive(path)
 
         # классификация
-        res = _NSFW_CLASSIFIER.classify(path)  # {'/tmp/avatar_..jpg': {'safe': x, 'unsafe': y}}
+        res = _NSFW_CLASSIFIER.classify(path)  # {'/tmp/avatar_123.jpg': {'safe': 0.12, 'unsafe': 0.88}}
         scores = list(res.values())[0]
         is_nsfw = scores.get('unsafe', 0.0) >= threshold
 
