@@ -3,6 +3,7 @@ from collections import namedtuple
 import os
 import asyncio
 import re
+import emoji
 import hashlib
 import regex
 import nest_asyncio
@@ -14,7 +15,7 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder, MessageHandler, CommandHandler,
-    filters, ContextTypes, ConversationHandler, CallbackQueryHandler
+    filters, ContextTypes, ConversationHandler, CallbackQueryHdelete_spam_messageandler
 )
 import pymorphy2
 from pymongo import MongoClient
@@ -78,6 +79,14 @@ def load_config():
         "BANNED_USERNAME_SUBSTRINGS": []
     }
 
+def is_only_emojis(text: str) -> bool:
+    # Убираем пробелы и невидимые символы
+    stripped = text.strip()
+    if not stripped:
+        return False
+    # Проверяем, что каждый символ — это эмодзи
+    return all(char in emoji.EMOJI_DATA for char in stripped)
+    
 def save_config(cfg):
     config_col.replace_one({"_id": "main"}, {**cfg, "_id": "main"}, upsert=True)
 
@@ -136,8 +145,12 @@ def analyze_banned_messages(cfg, min_count=2):
 # --- СПАМ ХЕНДЛЕР ---
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message or update.channel_post
-    if not msg or not msg.text:
-        return
+    if msg.text and is_only_emojis(msg.text):
+    try:
+        await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
+    except Exception:
+        pass
+    return
 
     user = msg.from_user
     text = msg.text
