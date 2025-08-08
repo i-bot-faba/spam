@@ -43,6 +43,7 @@ except Exception as e:
 AVATAR_NSFW_CACHE = {}  # user_id -> (ts, is_nsfw_bool)
 AVATAR_NSFW_TTL = 24 * 3600  # кэш 24 часа
 
+NUDE_DETECTOR = None
 
 PHRASE_HASH_MAP = {}
 
@@ -216,8 +217,9 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     proc_text = lemmatize_text(normalize_text(text))
 
     # 1) NSFW-аватар
+        # --- NSFW-аватар: баним сразу ---
     try:
-        if await is_user_avatar_nsfw(user.id, context):
+        if await avatar_is_nsfw(user, context):
             try:
                 await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
             except Exception:
@@ -226,6 +228,17 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
             except Exception:
                 pass
+            try:
+                await send_admin_notification(
+                    context.bot,
+                    f"Бан по NSFW-аватарке: @{user.username or user.first_name} (id {user.id})"
+                )
+            except Exception:
+                pass
+            return
+    except Exception:
+        # не даём упасть даже если телега не вернула фото/сломалась PIL
+        pass
             return
     except Exception as e:
         print("Avatar NSFW path failed:", e)
@@ -320,6 +333,69 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await send_admin_notification(context.bot, notif)
         # --- Сохраняем забаненные сообщения для автоанализа ---
         add_banned_message(text)
+
+async def avatar_is_nsfw(user, context) -> bool:
+    """
+    True, если аватарка с высокой долей «кожи».
+    Попытка подключить NudeNet (если установлен); иначе — простой порог по YCbCr.
+    Сломаться не даёт: любые ошибки -> False.
+    """
+    # пробуем скачать самую крупную аватарку пользователя
+    try:
+        photos = await context.bot.get_user_profile_photos(user.id, limit=1)
+        if not photos or photos.total_count == 0:
+            return False
+        # Берём самое большое фото из первой группы
+        photo_size = photos.photos[0][-1]
+        file = await context.bot.get_file(photo_size.file_id)
+        buf = BytesIO()
+        await file.download_to_memory(out=buf)
+        buf.seek(0)
+        img = Image.open(buf).convert("RGB")
+    except Exception:
+        return False
+
+    # 2.1 Попробовать NudeNet, если она есть (опционально)
+    global NUDE_DETECTOR
+    if NUDE_DETECTOR is None:
+        try:
+            from nudenet import NudeDetector  # если не установлено — упадёт в except
+            NUDE_DETECTOR = NudeDetector()
+        except Exception:
+            NUDE_DETECTOR = False
+
+    if NUDE_DETECTOR:
+        try:
+            # В разных версиях API отличается; обработаем оба случая
+            preds = NUDE_DETECTOR.detect(buf)  # некоторые версии принимают file-like
+            # если не получилось, попробуем через путь/байты — но ошибки просто игнорим
+            for p in preds or []:
+                label = (p.get("label") or "").upper()
+                score = float(p.get("score") or 0.0)
+                if score >= 0.6 and any(key in label for key in (
+                    "EXPOSED", "BREAST", "BUTTOCKS", "GENITAL", "AREOLA"
+                )):
+                    return True
+        except Exception:
+            pass  # тихий фолбэк на евристику ниже
+
+    # 2.2 Лёгкая евристика по доле «кожи» (YCbCr)
+    try:
+        small = img.resize((256, 256))
+        ycbcr = small.convert("YCbCr")
+        pixels = ycbcr.getdata()
+        total = len(pixels)
+        skin = 0
+        # классические диапазоны кожи в YCbCr
+        for (y, cb, cr) in pixels:
+            if 80 <= cb <= 135 and 135 <= cr <= 180:
+                skin += 1
+        ratio = skin / max(total, 1)
+        # порог подбери по месту; 0.38 обычно агрессивный, но ловит «голые аватарки»
+        return ratio >= 0.38
+    except Exception:
+        return False
+
 
 # --- /SPAMLIST ---
 async def spamlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
