@@ -14,8 +14,13 @@ from aiohttp import web
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
-    ApplicationBuilder, MessageHandler, CommandHandler,
-    filters, ContextTypes, ConversationHandler, CallbackQueryHdelete_spam_messageandler
+    ApplicationBuilder,
+    MessageHandler,
+    CommandHandler,
+    CallbackQueryHandler,
+    filters,
+    ContextTypes,
+    ConversationHandler,
 )
 import pymorphy2
 from pymongo import MongoClient
