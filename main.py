@@ -196,6 +196,7 @@ def analyze_banned_messages(cfg, min_count=2):
     return [w for w, c in freq.items() if c >= min_count]
 
 # ---------- OpenNSFW2: проверка аватарки ----------
+# ---------- OpenNSFW2: проверка аватарки ----------
 async def is_user_avatar_nsfw(user_id: int, context: ContextTypes.DEFAULT_TYPE, threshold: float = 0.88) -> bool:
     if not NSFW_ENABLED:
         return False
@@ -214,8 +215,30 @@ async def is_user_avatar_nsfw(user_id: int, context: ContextTypes.DEFAULT_TYPE, 
         # Берём самую большую версию первой фотки
         file_id = photos.photos[0][-1].file_id
         tg_file = await context.bot.get_file(file_id)
-        path = f"/tmp/avatar_{user_id}.jpg"
-        await tg_file.download_to_drive(path)
+
+        buf = BytesIO()
+        await tg_file.download_to_memory(out=buf)
+        buf.seek(0)
+
+        # Лёгкая эвристика по «коже» (чтобы не тянуть тяжёлые модели)
+        img = Image.open(buf).convert("RGB")
+        small = img.resize((256, 256)).convert("YCbCr")
+        pixels = small.getdata()
+        total = len(pixels)
+        skin = 0
+        for (y, cb, cr) in pixels:
+            if 80 <= cb <= 135 and 135 <= cr <= 180:
+                skin += 1
+        ratio = skin / max(total, 1)
+
+        is_nsfw = ratio >= 0.38  # при необходимости подстрой
+        AVATAR_NSFW_CACHE[user_id] = (now, is_nsfw)
+        return is_nsfw
+
+    except Exception as e:
+        print("OpenNSFW2/skin check failed:", e)
+        AVATAR_NSFW_CACHE[user_id] = (now, False)
+        return False
 
 
 # --- СПАМ ХЕНДЛЕР ---
@@ -240,7 +263,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     # 1) NSFW-аватар -> баним сразу
     # — БЫСТРАЯ ПРОВЕРКА АВАТАРА —
     # — быстрый бан по аватарке —
-    try:
+        try:
         if await avatar_is_nsfw(user.id, context.bot):
             try:
                 await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
