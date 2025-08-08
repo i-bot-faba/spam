@@ -237,6 +237,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 pass
             return
     except Exception:
+        pass
         # не даём упасть даже если телега не вернула фото/сломалась PIL
 
 
