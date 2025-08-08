@@ -3,11 +3,11 @@ from collections import namedtuple
 import os
 import asyncio
 import re
-import time
 import emoji
 import hashlib
 import regex
 import nest_asyncio
+from time import time
 from telegram import ReplyKeyboardMarkup
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from datetime import datetime, timedelta
@@ -30,18 +30,10 @@ from io import BytesIO
 from PIL import Image
 import imagehash
 
-# ---------- NSFW (аватар) через OpenNSFW2 ----------
-try:
-    NSFW_ENABLED = True
-    print("OpenNSFW2: модель загружена")
-except Exception as e:
-    _NSFW_MODEL = None
-    NSFW_ENABLED = False
-    print("OpenNSFW2: не удалось загрузить модель ->", e)
 
 AVATAR_NSFW_CACHE = {}  # user_id -> (ts, is_nsfw_bool)
-AVATAR_NSFW_TTL = 24 * 3600   # кэш результата на 24 часа
-AVATAR_CACHE: dict[int, tuple[float, bool]] = {}  # user_id -> (ts, is_nsfw)
+AVATAR_TTL = 24 * 3600
+AVATAR_CACHE: dict[int, tuple[float, bool]] = {}   # user_id -> (ts, is_nsfw)
 
 async def _fetch_biggest_avatar(user_id: int, bot):
     photos = await bot.get_user_profile_photos(user_id, limit=1)
@@ -55,7 +47,7 @@ async def _fetch_biggest_avatar(user_id: int, bot):
     return buf
 
 def _skin_ratio(img: Image.Image) -> float:
-    # Очень быстрая эвристика по диапазонам кожи в YCbCr
+    # Быстрая эвристика «доля кожи» в YCbCr
     small = img.resize((256, 256)).convert("YCbCr")
     pixels = small.getdata()
     total = len(pixels)
@@ -65,25 +57,29 @@ def _skin_ratio(img: Image.Image) -> float:
             skin += 1
     return skin / max(total, 1)
 
-async def avatar_is_nsfw(user_id: int, bot, threshold: float = 0.38) -> bool:
+async def avatar_is_nsfw(user_id: int, bot, threshold: float = 0.34) -> bool:
+    """True, если аватарка «слишком голая». Порог можно подстроить (0.32–0.40)."""
     now = time()
-    cached = _AVATAR_CACHE.get(user_id)
-    if cached and (now - cached[0] < AVATAR_NSFW_TTL):
+    cached = AVATAR_CACHE.get(user_id)
+    if cached and (now - cached[0] < AVATAR_TTL):
         return cached[1]
 
     try:
         bio = await _fetch_biggest_avatar(user_id, bot)
         if not bio:
-            _AVATAR_CACHE[user_id] = (now, False)
+            AVATAR_CACHE[user_id] = (now, False)
             return False
+
         img = Image.open(bio).convert("RGB")
         ratio = _skin_ratio(img)
-        is_bad = ratio >= threshold      # подстрой при необходимости (0.35–0.45)
-        _AVATAR_CACHE[user_id] = (now, is_bad)
+        print(f"[avatar] user={user_id} skin_ratio={ratio:.3f}")  # лог для дебага
+
+        is_bad = ratio >= threshold
+        AVATAR_CACHE[user_id] = (now, is_bad)
         return is_bad
     except Exception as e:
         print("avatar check error:", e)
-        _AVATAR_CACHE[user_id] = (now, False)
+        AVATAR_CACHE[user_id] = (now, False)
         return False
         
 PHRASE_HASH_MAP = {}
@@ -221,15 +217,6 @@ async def is_user_avatar_nsfw(user_id: int, context: ContextTypes.DEFAULT_TYPE, 
         path = f"/tmp/avatar_{user_id}.jpg"
         await tg_file.download_to_drive(path)
 
-        # OpenNSFW2: возвращает вероятность NSFW (0..1)
-        score = float(opennsfw2.predict_image(path, _NSFW_MODEL))
-        is_nsfw = score >= threshold
-        AVATAR_NSFW_CACHE[user_id] = (now, is_nsfw)
-        return is_nsfw
-    except Exception as e:
-        print("OpenNSFW2 check failed:", e)
-        AVATAR_NSFW_CACHE[user_id] = (now, False)
-        return False
 
 # --- СПАМ ХЕНДЛЕР ---
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -252,6 +239,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # 1) NSFW-аватар -> баним сразу
     # — БЫСТРАЯ ПРОВЕРКА АВАТАРА —
+    # — быстрый бан по аватарке —
     try:
         if await avatar_is_nsfw(user.id, context.bot):
             try:
