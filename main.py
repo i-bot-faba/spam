@@ -238,10 +238,6 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
     except Exception:
         # не даём упасть даже если телега не вернула фото/сломалась PIL
-        pass
-            return
-    except Exception as e:
-        print("Avatar NSFW path failed:", e)
 
 
     name = user.first_name or ""
