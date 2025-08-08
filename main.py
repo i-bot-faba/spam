@@ -263,7 +263,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     # 1) NSFW-аватар -> баним сразу
     # — БЫСТРАЯ ПРОВЕРКА АВАТАРА —
     # — быстрый бан по аватарке —
-        try:
+    try:
         if await avatar_is_nsfw(user.id, context.bot):
             try:
                 await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
