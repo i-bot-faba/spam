@@ -10,5 +10,4 @@ imagehash
 requests
 regex
 emoji
-nudenet==3.4.2
 pillow
