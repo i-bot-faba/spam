@@ -29,11 +29,9 @@ import requests
 from io import BytesIO
 from PIL import Image
 import imagehash
-import opennsfw2  # <— ЛОКАЛЬНАЯ NSFW-модель
 
 # ---------- NSFW (аватар) через OpenNSFW2 ----------
 try:
-    _NSFW_MODEL = opennsfw2.make_open_nsfw_model()
     NSFW_ENABLED = True
     print("OpenNSFW2: модель загружена")
 except Exception as e:
