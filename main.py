@@ -40,8 +40,52 @@ except Exception as e:
     print("OpenNSFW2: не удалось загрузить модель ->", e)
 
 AVATAR_NSFW_CACHE = {}  # user_id -> (ts, is_nsfw_bool)
-AVATAR_NSFW_TTL = 24 * 3600  # кэш 24 часа
+AVATAR_NSFW_TTL = 24 * 3600   # кэш результата на 24 часа
+AVATAR_CACHE: dict[int, tuple[float, bool]] = {}  # user_id -> (ts, is_nsfw)
 
+async def _fetch_biggest_avatar(user_id: int, bot):
+    photos = await bot.get_user_profile_photos(user_id, limit=1)
+    if not photos or photos.total_count == 0:
+        return None
+    file_id = photos.photos[0][-1].file_id  # самый крупный размер
+    f = await bot.get_file(file_id)
+    buf = BytesIO()
+    await f.download_to_memory(out=buf)
+    buf.seek(0)
+    return buf
+
+def _skin_ratio(img: Image.Image) -> float:
+    # Очень быстрая эвристика по диапазонам кожи в YCbCr
+    small = img.resize((256, 256)).convert("YCbCr")
+    pixels = small.getdata()
+    total = len(pixels)
+    skin = 0
+    for (y, cb, cr) in pixels:
+        if 80 <= cb <= 135 and 135 <= cr <= 180:
+            skin += 1
+    return skin / max(total, 1)
+
+async def avatar_is_nsfw(user_id: int, bot, threshold: float = 0.38) -> bool:
+    now = time()
+    cached = _AVATAR_CACHE.get(user_id)
+    if cached and (now - cached[0] < AVATAR_NSFW_TTL):
+        return cached[1]
+
+    try:
+        bio = await _fetch_biggest_avatar(user_id, bot)
+        if not bio:
+            _AVATAR_CACHE[user_id] = (now, False)
+            return False
+        img = Image.open(bio).convert("RGB")
+        ratio = _skin_ratio(img)
+        is_bad = ratio >= threshold      # подстрой при необходимости (0.35–0.45)
+        _AVATAR_CACHE[user_id] = (now, is_bad)
+        return is_bad
+    except Exception as e:
+        print("avatar check error:", e)
+        _AVATAR_CACHE[user_id] = (now, False)
+        return False
+        
 PHRASE_HASH_MAP = {}
 
 ArgSpec = namedtuple("ArgSpec", "args varargs keywords defaults")
@@ -207,8 +251,9 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     proc_text = lemmatize_text(normalize_text(text))
 
     # 1) NSFW-аватар -> баним сразу
+    # — БЫСТРАЯ ПРОВЕРКА АВАТАРА —
     try:
-        if await is_user_avatar_nsfw(user.id, context):
+        if await avatar_is_nsfw(user.id, context.bot):
             try:
                 await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
             except Exception:
@@ -217,17 +262,13 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
             except Exception:
                 pass
-            try:
-                await send_admin_notification(
-                    context.bot,
-                    f"Бан по NSFW-аватарке: @{user.username or user.first_name} (id {user.id})"
-                )
-            except Exception:
-                pass
+            await send_admin_notification(
+                context.bot,
+                f"Бан по аватарке (NSFW эвристика): @{user.username or user.first_name} ({user.id})"
+            )
             return
-    except Exception:
-        # вообще не даём упасть из-за этой проверки
-        pass
+    except Exception as e:
+        print("avatar check in message failed:", e)
 
     # 2) Ник с одинаковыми эмодзи по краям -> бан
     name = user.first_name or ""
@@ -517,6 +558,24 @@ addspam_conv = ConversationHandler(
     per_user=True
 )
 
+async def on_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    chat_id = update.effective_chat.id
+    for u in update.message.new_chat_members:
+        try:
+            if await avatar_is_nsfw(u.id, context.bot):
+                try:
+                    await context.bot.ban_chat_member(chat_id, u.id)
+                except Exception:
+                    pass
+                await send_admin_notification(
+                    context.bot,
+                    f"Кик по аватарке при входе: @{u.username or u.first_name} ({u.id})"
+                )
+        except Exception as e:
+            print("new member avatar check error:", e)
+            
 async def addword_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     word = query.data.replace("addword_", "")
@@ -555,6 +614,7 @@ async def init_app():
     app.add_handler(CommandHandler("analyze", analyze_banned))
     app.add_handler(CommandHandler("menu", menu_command))
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, on_new_member))
     app.add_handler(CommandHandler("analyzeone", analyzeone))
     app.add_handler(CallbackQueryHandler(select_phrase_callback, pattern="^(toggle_|confirm_phrases)"))
     app.add_handler(CallbackQueryHandler(addword_callback, pattern=r"^addword_"))
