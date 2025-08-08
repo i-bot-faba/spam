@@ -29,6 +29,21 @@ from io import BytesIO
 from PIL import Image
 import imagehash
 
+# --- NSFW (аватар) ---
+try:
+    from nudenet import NudeClassifierLite
+    _NSFW_CLASSIFIER = NudeClassifierLite()  # лёгкая модель
+    NSFW_ENABLED = True
+    print("NSFW avatar check: enabled")
+except Exception as e:
+    _NSFW_CLASSIFIER = None
+    NSFW_ENABLED = False
+    print("NSFW avatar check: disabled ->", e)
+
+AVATAR_NSFW_CACHE = {}  # user_id -> (ts, is_nsfw_bool)
+AVATAR_NSFW_TTL = 24 * 3600  # кэш 24 часа
+
+
 PHRASE_HASH_MAP = {}
 
 ArgSpec = namedtuple("ArgSpec", "args varargs keywords defaults")
@@ -147,9 +162,47 @@ def analyze_banned_messages(cfg, min_count=2):
         freq[w] = freq.get(w, 0) + 1
     return [w for w, c in freq.items() if c >= min_count]
 
+async def is_user_avatar_nsfw(user_id: int, context: ContextTypes.DEFAULT_TYPE, threshold: float = 0.88) -> bool:
+    if not NSFW_ENABLED:
+        return False
+
+    # кэш
+    now = datetime.utcnow().timestamp()
+    cached = AVATAR_NSFW_CACHE.get(user_id)
+    if cached and (now - cached[0] < AVATAR_NSFW_TTL):
+        return cached[1]
+
+    try:
+        photos = await context.bot.get_user_profile_photos(user_id, limit=1)
+        if photos.total_count == 0:
+            AVATAR_NSFW_CACHE[user_id] = (now, False)
+            return False
+
+        # берём самую большую версию первой фотки
+        file_id = photos.photos[0][-1].file_id
+        tg_file = await context.bot.get_file(file_id)
+        path = f"/tmp/avatar_{user_id}.jpg"
+        await tg_file.download_to_drive(path)
+
+        # классификация
+        res = _NSFW_CLASSIFIER.classify(path)  # {'/tmp/avatar_..jpg': {'safe': x, 'unsafe': y}}
+        scores = list(res.values())[0]
+        is_nsfw = scores.get('unsafe', 0.0) >= threshold
+
+        AVATAR_NSFW_CACHE[user_id] = (now, is_nsfw)
+        return is_nsfw
+    except Exception as e:
+        print("NSFW check failed:", e)
+        AVATAR_NSFW_CACHE[user_id] = (now, False)
+        return False
+        
 # --- СПАМ ХЕНДЛЕР ---
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message or update.channel_post
+    if not msg:
+        return
+
+    # 0) эмодзи-пустышки удаляем сразу
     if msg.text and is_only_emojis(msg.text):
         try:
             await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
@@ -158,9 +211,26 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     user = msg.from_user
-    text = msg.text
+    text = msg.text or ""  # <-- чтобы не падать, если нет текста
     cfg = load_config()
     proc_text = lemmatize_text(normalize_text(text))
+
+    # 1) NSFW-аватар
+    try:
+        if await is_user_avatar_nsfw(user.id, context):
+            try:
+                await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
+            except Exception:
+                pass
+            try:
+                await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
+            except Exception:
+                pass
+            return
+    except Exception as e:
+        print("Avatar NSFW path failed:", e)
+
+
     name = user.first_name or ""
     if user.last_name:
         name += " " + user.last_name
