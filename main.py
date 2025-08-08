@@ -3,6 +3,7 @@ from collections import namedtuple
 import os
 import asyncio
 import re
+import time
 import emoji
 import hashlib
 import regex
@@ -28,22 +29,20 @@ import requests
 from io import BytesIO
 from PIL import Image
 import imagehash
+import opennsfw2  # <— ЛОКАЛЬНАЯ NSFW-модель
 
-# --- NSFW (аватар) ---
+# ---------- NSFW (аватар) через OpenNSFW2 ----------
 try:
-    from nudenet import NudeClassifier
-    _NSFW_CLASSIFIER = NudeClassifier()  # авто-скачает веса при первом запуске
+    _NSFW_MODEL = opennsfw2.make_open_nsfw_model()
     NSFW_ENABLED = True
-    print("NSFW avatar check: enabled")
+    print("OpenNSFW2: модель загружена")
 except Exception as e:
-    _NSFW_CLASSIFIER = None
+    _NSFW_MODEL = None
     NSFW_ENABLED = False
-    print("NSFW avatar check: disabled ->", e)
+    print("OpenNSFW2: не удалось загрузить модель ->", e)
 
 AVATAR_NSFW_CACHE = {}  # user_id -> (ts, is_nsfw_bool)
 AVATAR_NSFW_TTL = 24 * 3600  # кэш 24 часа
-
-NUDE_DETECTOR = None
 
 PHRASE_HASH_MAP = {}
 
@@ -78,7 +77,7 @@ def is_spam_like(phrase, banned_words, stop_phrases):
         if sp.lower() in phrase.lower():
             return True
     return False
-    
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! Для меню нажми кнопку ниже или напиши /menu",
@@ -101,13 +100,11 @@ def load_config():
     }
 
 def is_only_emojis(text: str) -> bool:
-    # Убираем пробелы и невидимые символы
-    stripped = text.strip()
+    stripped = (text or "").strip()
     if not stripped:
         return False
-    # Проверяем, что каждый символ — это эмодзи
     return all(char in emoji.EMOJI_DATA for char in stripped)
-    
+
 def save_config(cfg):
     config_col.replace_one({"_id": "main"}, {**cfg, "_id": "main"}, upsert=True)
 
@@ -119,10 +116,10 @@ def normalize_text(text: str) -> str:
         'a':'а','c':'с','e':'е','o':'о','p':'р','y':'у','x':'х',
         '3':'з','0':'о'
     }
-    return "".join(mapping.get(ch, ch) for ch in text.lower())
+    return "".join(mapping.get(ch, ch) for ch in (text or "").lower())
 
 def lemmatize_text(text: str) -> str:
-    return " ".join(morph.parse(w)[0].normal_form for w in text.split())
+    return " ".join(morph.parse(w)[0].normal_form for w in (text or "").split())
 
 async def send_admin_notification(bot, text: str):
     try:
@@ -138,9 +135,7 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/analyzeone — анализировать сообщение\n"
         "/analyze — анализ часто встречающихся слов\n"
     )
-    await update.message.reply_text(
-        text, parse_mode=ParseMode.HTML
-    )
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 # --- Анализ новых банов для автопредложения ---
 def add_banned_message(text):
@@ -150,11 +145,10 @@ def add_banned_message(text):
     })
 
 def analyze_banned_messages(cfg, min_count=2):
-    # Собирает слова/фразы, которые чаще всего встречаются в забаненных сообщениях, но не входят в стоп-лист
     all_msgs = [doc["text"] for doc in banned_col.find()]
     words = []
     for msg in all_msgs:
-        words += re.findall(r'\b[\w\d\-\_]+\b', msg.lower())
+        words += re.findall(r'\b[\w\d\-\_]+\b', (msg or "").lower())
     stop_words = set(map(str.lower, cfg.get("BANNED_WORDS", [])))
     freq = {}
     for w in words:
@@ -163,47 +157,45 @@ def analyze_banned_messages(cfg, min_count=2):
         freq[w] = freq.get(w, 0) + 1
     return [w for w, c in freq.items() if c >= min_count]
 
+# ---------- OpenNSFW2: проверка аватарки ----------
 async def is_user_avatar_nsfw(user_id: int, context: ContextTypes.DEFAULT_TYPE, threshold: float = 0.88) -> bool:
     if not NSFW_ENABLED:
         return False
 
-    # кэш
-    now = datetime.utcnow().timestamp()
+    now = time.time()
     cached = AVATAR_NSFW_CACHE.get(user_id)
     if cached and (now - cached[0] < AVATAR_NSFW_TTL):
         return cached[1]
 
     try:
         photos = await context.bot.get_user_profile_photos(user_id, limit=1)
-        if photos.total_count == 0:
+        if not photos or photos.total_count == 0:
             AVATAR_NSFW_CACHE[user_id] = (now, False)
             return False
 
-        # берём самую большую версию первой фотки
+        # Берём самую большую версию первой фотки
         file_id = photos.photos[0][-1].file_id
         tg_file = await context.bot.get_file(file_id)
         path = f"/tmp/avatar_{user_id}.jpg"
         await tg_file.download_to_drive(path)
 
-        # классификация
-        res = _NSFW_CLASSIFIER.classify(path)  # {'/tmp/avatar_123.jpg': {'safe': 0.12, 'unsafe': 0.88}}
-        scores = list(res.values())[0]
-        is_nsfw = scores.get('unsafe', 0.0) >= threshold
-
+        # OpenNSFW2: возвращает вероятность NSFW (0..1)
+        score = float(opennsfw2.predict_image(path, _NSFW_MODEL))
+        is_nsfw = score >= threshold
         AVATAR_NSFW_CACHE[user_id] = (now, is_nsfw)
         return is_nsfw
     except Exception as e:
-        print("NSFW check failed:", e)
+        print("OpenNSFW2 check failed:", e)
         AVATAR_NSFW_CACHE[user_id] = (now, False)
         return False
-        
+
 # --- СПАМ ХЕНДЛЕР ---
 async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message or update.channel_post
     if not msg:
         return
 
-    # 0) эмодзи-пустышки удаляем сразу
+    # 0) удаляем «сообщение лишь из эмодзи»
     if msg.text and is_only_emojis(msg.text):
         try:
             await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
@@ -212,14 +204,13 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     user = msg.from_user
-    text = msg.text or ""  # <-- чтобы не падать, если нет текста
+    text = msg.text or ""  # не падаем, если текста нет
     cfg = load_config()
     proc_text = lemmatize_text(normalize_text(text))
 
-    # 1) NSFW-аватар
-        # --- NSFW-аватар: баним сразу ---
+    # 1) NSFW-аватар -> баним сразу
     try:
-        if await avatar_is_nsfw(user, context):
+        if await is_user_avatar_nsfw(user.id, context):
             try:
                 await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
             except Exception:
@@ -237,25 +228,26 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 pass
             return
     except Exception:
+        # вообще не даём упасть из-за этой проверки
         pass
-        # не даём упасть даже если телега не вернула фото/сломалась PIL
 
-
+    # 2) Ник с одинаковыми эмодзи по краям -> бан
     name = user.first_name or ""
     if user.last_name:
         name += " " + user.last_name
-    # Проверка: два одинаковых эмодзи по краям
     match = regex.match(r"^(?P<emoji>\X)\s?.+\s?(?P=emoji)$", name, flags=regex.UNICODE)
     if match and len(match.group("emoji")) > 0:
-        # баним
         try:
             await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
-        except Exception: pass
+        except Exception:
+            pass
         try:
             await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
-        except Exception: pass
+        except Exception:
+            pass
         return
 
+    # 3) Остальные твои правила
     full_name = user.first_name or ""
     if user.last_name:
         full_name += " | " + user.last_name
@@ -263,7 +255,6 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     name_lower = normalize_text(clean_name)
 
     ban = False
-    # все проверки как раньше
     if "💋" in clean_name:
         ban = True
 
@@ -275,7 +266,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if not ban:
         norm_name = lemmatize_text(name_lower)
-        banned_norms = [lemmatize_text(normalize_text(n)) for n in cfg.get("BANNED_FULL_NAMES",[])]
+        banned_norms = [lemmatize_text(normalize_text(n)) for n in cfg.get("BANNED_FULL_NAMES", [])]
         if norm_name in banned_norms:
             ban = True
 
@@ -287,29 +278,28 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 break
 
     if not ban:
-        matched = [s for s in cfg.get("BANNED_SYMBOLS",[]) if s in clean_name]
+        matched = [s for s in cfg.get("BANNED_SYMBOLS", []) if s in clean_name]
         if matched:
             ban = True
 
-    # --- Блок по вхождению даже с символами (расширенный) ---
     def clean_for_match(s):
-        # Удаляем спецсимволы и приводим к нижнему
-        return re.sub(r'[^a-zA-Zа-яА-Я0-9]', '', s.lower())
+        return re.sub(r'[^a-zA-Zа-яА-Я0-9]', '', (s or '').lower())
 
     text_raw_clean = clean_for_match(text)
-    for w in cfg.get("BANNED_WORDS",[]):
-        if clean_for_match(w) in text_raw_clean:
-            ban = True
-            break
+    if not ban:
+        for w in cfg.get("BANNED_WORDS", []):
+            if clean_for_match(w) in text_raw_clean:
+                ban = True
+                break
 
     if not ban:
-        for phrase in cfg.get("PERMANENT_BLOCK_PHRASES",[]):
+        for phrase in cfg.get("PERMANENT_BLOCK_PHRASES", []):
             if lemmatize_text(normalize_text(phrase)) in proc_text:
                 ban = True
                 break
 
     if not ban:
-        for combo in cfg.get("COMBINED_BLOCKS",[]):
+        for combo in cfg.get("COMBINED_BLOCKS", []):
             if all(lemmatize_text(normalize_text(w)) in proc_text for w in combo):
                 ban = True
                 break
@@ -317,10 +307,12 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     if ban:
         try:
             await context.bot.delete_message(chat_id=msg.chat.id, message_id=msg.message_id)
-        except Exception: pass
+        except Exception:
+            pass
         try:
             await context.bot.ban_chat_member(chat_id=msg.chat.id, user_id=user.id)
-        except Exception: pass
+        except Exception:
+            pass
         notif = (
             f"Забанен: @{user.username or user.first_name}\n"
             f"Имя: {clean_name}\n"
@@ -328,71 +320,7 @@ async def delete_spam_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Сообщение: {text}"
         )
         await send_admin_notification(context.bot, notif)
-        # --- Сохраняем забаненные сообщения для автоанализа ---
         add_banned_message(text)
-
-async def avatar_is_nsfw(user, context) -> bool:
-    """
-    True, если аватарка с высокой долей «кожи».
-    Попытка подключить NudeNet (если установлен); иначе — простой порог по YCbCr.
-    Сломаться не даёт: любые ошибки -> False.
-    """
-    # пробуем скачать самую крупную аватарку пользователя
-    try:
-        photos = await context.bot.get_user_profile_photos(user.id, limit=1)
-        if not photos or photos.total_count == 0:
-            return False
-        # Берём самое большое фото из первой группы
-        photo_size = photos.photos[0][-1]
-        file = await context.bot.get_file(photo_size.file_id)
-        buf = BytesIO()
-        await file.download_to_memory(out=buf)
-        buf.seek(0)
-        img = Image.open(buf).convert("RGB")
-    except Exception:
-        return False
-
-    # 2.1 Попробовать NudeNet, если она есть (опционально)
-    global NUDE_DETECTOR
-    if NUDE_DETECTOR is None:
-        try:
-            from nudenet import NudeDetector  # если не установлено — упадёт в except
-            NUDE_DETECTOR = NudeDetector()
-        except Exception:
-            NUDE_DETECTOR = False
-
-    if NUDE_DETECTOR:
-        try:
-            # В разных версиях API отличается; обработаем оба случая
-            preds = NUDE_DETECTOR.detect(buf)  # некоторые версии принимают file-like
-            # если не получилось, попробуем через путь/байты — но ошибки просто игнорим
-            for p in preds or []:
-                label = (p.get("label") or "").upper()
-                score = float(p.get("score") or 0.0)
-                if score >= 0.6 and any(key in label for key in (
-                    "EXPOSED", "BREAST", "BUTTOCKS", "GENITAL", "AREOLA"
-                )):
-                    return True
-        except Exception:
-            pass  # тихий фолбэк на евристику ниже
-
-    # 2.2 Лёгкая евристика по доле «кожи» (YCbCr)
-    try:
-        small = img.resize((256, 256))
-        ycbcr = small.convert("YCbCr")
-        pixels = ycbcr.getdata()
-        total = len(pixels)
-        skin = 0
-        # классические диапазоны кожи в YCbCr
-        for (y, cb, cr) in pixels:
-            if 80 <= cb <= 135 and 135 <= cr <= 180:
-                skin += 1
-        ratio = skin / max(total, 1)
-        # порог подбери по месту; 0.38 обычно агрессивный, но ловит «голые аватарки»
-        return ratio >= 0.38
-    except Exception:
-        return False
-
 
 # --- /SPAMLIST ---
 async def spamlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -420,8 +348,8 @@ async def analyze_banned(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Нет новых часто встречающихся слов.")
         return
     await update.message.reply_text("Часто встречающиеся новые слова:\n" + "\n".join(candidates))
-    
-# --- /ANALYZE (анализ новых забаненных для пополнения стоп-листа) ---
+
+# --- /analyzeone (анализ любого сообщения, ручное пополнение) ---
 async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_CHAT_ID:
         await update.message.reply_text("Нет доступа.")
@@ -444,17 +372,13 @@ async def analyzeone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Нет подходящих новых фраз для добавления.")
         return
 
-
     keyboard = []
     for c in candidates:
         short_hash = hashlib.sha1(c.encode()).hexdigest()[:8]
         PHRASE_HASH_MAP[short_hash] = c
         keyboard.append([
-            InlineKeyboardButton(
-                text=f"☐ {c}", callback_data=f"toggle_{short_hash}_0"
-            )
+            InlineKeyboardButton(text=f"☐ {c}", callback_data=f"toggle_{short_hash}_0")
         ])
-    # Кнопка подтвердить
     keyboard.append([InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_phrases")])
     await update.message.reply_text(
         "Выбери фразы для добавления в стоп-лист (можно несколько):",
@@ -478,15 +402,12 @@ async def select_phrase_callback(update: Update, context: ContextTypes.DEFAULT_T
             selected_phrases.discard(short_hash)
         context.user_data["selected_phrases"] = selected_phrases
 
-        # Перерисовать кнопки
         keyboard = []
         for sh, phrase in PHRASE_HASH_MAP.items():
             checked = "☑️" if sh in selected_phrases else "☐"
             cb_selected = "1" if sh in selected_phrases else "0"
             keyboard.append([
-                InlineKeyboardButton(
-                    text=f"{checked} {phrase}", callback_data=f"toggle_{sh}_{cb_selected}"
-                )
+                InlineKeyboardButton(text=f"{checked} {phrase}", callback_data=f"toggle_{sh}_{cb_selected}")
             ])
         keyboard.append([InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_phrases")])
         await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
@@ -502,34 +423,11 @@ async def select_phrase_callback(update: Update, context: ContextTypes.DEFAULT_T
             if phrase not in cfg.get("PERMANENT_BLOCK_PHRASES", []):
                 cfg.setdefault("PERMANENT_BLOCK_PHRASES", []).append(phrase)
         save_config(cfg)
-        await query.edit_message_text(
-            "Фразы добавлены:\n" + "\n".join(phrases)
-        )
+        await query.edit_message_text("Фразы добавлены:\n" + "\n".join(phrases))
         context.user_data["selected_phrases"] = set()
 
-# обработчик callback для add_phrase
-async def add_phrase_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    if data.startswith("add_phrase|"):
-        short_hash = data.split("|", 1)[1]
-        phrase = PHRASE_HASH_MAP.get(short_hash)  # берем фразу по хэшу
-        if not phrase:
-            await query.edit_message_text("Фраза не найдена.")
-            return
-        cfg = load_config()
-        if phrase not in cfg.get("PERMANENT_BLOCK_PHRASES", []):
-            cfg.setdefault("PERMANENT_BLOCK_PHRASES", []).append(phrase)
-            save_config(cfg)
-            await query.edit_message_text(f"Фраза добавлена:\n{phrase}")
-        else:
-            await query.edit_message_text("Фраза уже есть в списке.")
-
 # --- /ADDSPAM как раньше, плюс BANNED_USERNAME_SUBSTRINGS ---
-(
-    ADD_CHOICE, ADD_INPUT, ADD_COMBO
-) = range(3)
+(ADD_CHOICE, ADD_INPUT, ADD_COMBO) = range(3)
 
 async def addspam_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_CHAT_ID:
@@ -643,7 +541,7 @@ async def set_commands(app):
         BotCommand("start", "Информация о боте"),
     ]
     await app.bot.set_my_commands(commands)
-    
+
 # --- ЗАПУСК ---
 async def init_app():
     port  = int(os.environ.get("PORT", 8443))
@@ -661,9 +559,8 @@ async def init_app():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("analyzeone", analyzeone))
     app.add_handler(CallbackQueryHandler(select_phrase_callback, pattern="^(toggle_|confirm_phrases)"))
-    app.add_handler(CallbackQueryHandler(add_phrase_callback, pattern="^add_phrase\|"))
     app.add_handler(CallbackQueryHandler(addword_callback, pattern=r"^addword_"))
-    app.add_handler(MessageHandler(filters.ALL, delete_spam_message))  # <-- СТАВЬ В САМЫЙ НИЗ!
+    app.add_handler(MessageHandler(filters.ALL, delete_spam_message))  # ДЕРЖИ В НИЗУ
     await app.initialize()
     await set_commands(app)
     await app.bot.set_webhook(webhook_url)
